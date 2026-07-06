@@ -14,6 +14,7 @@ from inverse_solvers import inverse_kinematics_interiorPenalty
 from inverse_solvers.inverse_kinematics_interiorPenalty import InverseKinematics
 from inverse_solvers.inverse_dynamics import InverseDynamics
 import leg_height_con
+from mujoco import viewer
 
 """
 Script runs both the inverse kinematics and dynamics solvers, then maps values to
@@ -208,18 +209,29 @@ for trans_idx in range(num_trans):
                                                                        shift_amount[leg_idx], axis=1)
                 foot_path_traj[leg_idx, trans_idx, rot_idx] = np.roll(foot_path_traj[leg_idx, trans_idx, rot_idx],
                                                                       shift_amount[leg_idx], axis=1)
+""" section 5 - inverse dynamics"""
 
-"""Map full_kinematics cell and grf to Mujoco model, then gathers pos and vel data for one leg 
+# inverse dynamics calculations for joint torques and grf and offset of leg motion
+id = InverseDynamics(model, data, full_kinematics, body_names, leg_names, joint_names, swing_duration, stance_duty,
+                     contra_phase, ipsal_phase)
+trans_vec = 0
+rot_vec = 0
+vel = [None] * 6
+acc = [None] * 6
+for i in range(6):
+    vel[i], acc[i] = id.vel_acc(i, trans_vec, rot_vec)
+tau, grf = id.solve_inverse_dynamics_with_contact_plane(trans_vec, rot_vec, foot_path_traj[:, 1, 1], vel=vel, acc=acc,
+                                                        plane_geom_name="ground", )
+tau_from_grf = id.estimate_torque_from_grf(trans_vec, rot_vec, grf)
+
+traj = full_kinematics[0, 0, 0]
+samps_per_step = id.samps_per_step
+step_period = id.step_period
+sample_idx = np.arange(samps_per_step)
+
+"""Map full_kinematics cell and grf to Mujoco model, then gathers joint kinematics and GRF data for one leg 
 and their corresponding joints"""
-all_joint_ids = []
-all_joint_names = []
-all_qpos_idx = []
-all_dof_idx = []
 
-leg_joint_qpos_indices = {leg: [] for leg in leg_names}
-leg_joint_dof_indices = {leg: [] for leg in leg_names}
-
-dt = model.opt.timestep
 
 """
 leg_idx legend: 
@@ -230,83 +242,40 @@ leg_idx legend:
 4 = LF
 5 = RF
 """
-
-leg_idx = 0
-for j_name in joint_names:
-    if leg_names[leg_idx] in j_name:
-        j_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, j_name)
-        all_joint_ids.append(j_id)
-        all_joint_names.append(j_name)
-        all_qpos_idx.append(model.jnt_qposadr[j_id])
-        all_dof_idx.append(model.jnt_dofadr[j_id])
-        leg_joint_qpos_indices[(leg_names[leg_idx])].append(model.jnt_qposadr[j_id])
-        leg_joint_dof_indices[(leg_names[leg_idx])].append(model.jnt_dofadr[j_id])
-
-csv_headers = ["time"]
-
-# make headers for csv. separates each joint into their pos values and grf for each leg (x, y, z) coords
-for j in all_joint_names:
-    print(j)
-    csv_headers.append(f"{j}_pos")
-    csv_headers.append(f"{j}_vel")
-    csv_headers.append(f"{j}_acc")
-
-
-"""TODO: add GRF data"""
-"""for l in leg_names:
-    csv_headers.append(f"{l}_GRF_x")
-    csv_headers.append(f"{l}_GRF_y")
-    csv_headers.append(f"{l}_GRF_z")
-"""""
-
 big_main_dataset = []
-sequence_length = full_kinematics.shape[-1]
 
-for step_count in range(10000):
-    current_time = step_count * dt
-    row_data = [current_time]
-    data_idx = step_count % sequence_length #so the data can repeat itself
-    #maps kinematics cell
-    qpos_indices = leg_joint_qpos_indices
-    dof_indices = leg_joint_dof_indices
+dt = 0.002 #2 ms
 
+for leg_idx in range(num_legs):
+    current_leg_name = leg_names[leg_idx]
+    csv_headers = ["time"]
 
-    leg_name = leg_names[leg_idx]
-    qpos_indices = leg_joint_qpos_indices[leg_name]
-    dof_indices = leg_joint_dof_indices[leg_name]
-    leg_positions = full_kinematics[leg_idx, 0, 0][:, data_idx]
-    data.qpos[qpos_indices] = leg_positions
+    csv_headers.extend([f"{current_leg_name}_GRF_x", f"{current_leg_name}_GRF_y", f"{current_leg_name}_GRF_z"])
 
-    mujoco.mj_step(model, data)
+    matched_joints = [j for j in joint_names if current_leg_name in j]
+    num_matched_joints = len(matched_joints)
 
-    for pos_idx, dof_idx in zip(all_qpos_idx, all_dof_idx):
-        row_data.append(data.qpos[pos_idx])
-        row_data.append(data.qvel[dof_idx])
-        row_data.append(data.qacc[dof_idx])
+    for j_name in matched_joints:
+        csv_headers.extend([f"{j_name}_pos", f"{j_name}_acc"])
 
-    """#initialize contact forces for all legs to zero
-    leg_grfs = {leg: np.zeros(3) for leg in leg_names}
+    # Extract data grid for current leg
+    samples_per_traj = full_kinematics[leg_idx, 0, 0].shape[1]
+    leg_grid = full_kinematics[leg_idx, :, :]
 
-    plane_geom_id = model.geom("ground").id
-    tip_body_ids = [model.body(f"{name}_Tip").id for name in leg_names]
+    all_time_steps = []
+    for t_step in range(samples_per_traj):
+        current_time = t_step * dt
+        row_data = [current_time]
 
-    for c_idx in range(data.ncon):
-        contact = data.contact[c_idx]
-        geom1_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom1)
-        geom2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom2)
+        grf_arr = grf[leg_idx, t_step, :]
+        row_data.extend([grf_arr[0], grf_arr[1], grf_arr[2]])
 
-        wrench = np.zeros(6, dtype=np.float64)
-        mujoco.mj_contactForce(model, data, c_idx, wrench)
+        for joint_local_idx in range(num_matched_joints):
+            pos_val = leg_grid[0, 0][joint_local_idx, t_step]
+            acc_val = leg_grid[2, 0][joint_local_idx, t_step]
+            row_data.extend([pos_val, acc_val])
 
-        for leg in leg_names:
-            if (geom1_name and leg in geom1_name) or (geom2_name and leg in geom2_name):
-                leg_grfs[leg] += wrench[:3]
+        all_time_steps.append(row_data)
 
-    for leg in leg_names:
-        row_data.extend(leg_grfs[leg])
-"""
-
-    big_main_dataset.append(row_data)
-df = pd.DataFrame(big_main_dataset, columns=csv_headers)
-df.to_csv(f"csv/gait_phase_{leg_name}_features.csv", index=False)
-
+    df = pd.DataFrame(all_time_steps, columns=csv_headers)
+    df.to_csv(f"csv/gait_phase_{current_leg_name}_trajectories.csv", index=False)
