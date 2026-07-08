@@ -1,31 +1,44 @@
-from xml.parsers.expat import model
-
 import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
+import random
 
 
 """Script utilizes a range-fractionated GRU autoencoder to lower feature dimensions 
 and K-Means clustering to cluster joint kinematic and GRF data to either stance or swing phase"""
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 0. Set random seed to make models deterministic
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+def deterministic(seed=42):
+    #sets seeds for python and pytorch random number generators
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True)
 
-#initialize model
-class GaussianRangeFractionatation(nn.Module): #to be used before autoencoder to fractionate the input data into a range of neurons (acts as encoder)
-    def __init__(self, num_neurons, min_value=0.0, max_value=1.0, sigma=0.1):
-        super(GaussianRangeFractionatation, self).__init__()
+deterministic(seed=42)
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 1. Define Models
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# range fractionation
+class GaussianRangeFractionation(nn.Module): #to be used before autoencoder to fractionate the input data into a range of neurons (acts as encoder)
+    def __init__(self, num_neurons, min_value, max_value, sigma=0.1):
+        super(GaussianRangeFractionation, self).__init__()
         self.num_neurons = num_neurons
         self.min_value = min_value
         self.max_value = max_value
         self.sigma = sigma
-        self.centers = torch.linspace(min_value, max_value, num_neurons)  #centers of the Gaussian functions
-        self.sigma = torch.full((num_neurons,), sigma)  #standard deviation for each Gaussian function
 
-        thresholds = torch.linspace(min_value, max_value, num_neurons)
-        self.register_buffer('thresholds', thresholds)  #register thresholds as a buffer (fixed tensor that is not a parameter)
+        centers = torch.linspace(min_value, max_value, num_neurons)  #centers of the Gaussian functions
+        self.register_buffer('centers',centers) #register centers as a buffer (fixed tensor that is not a parameter)
+
+        self.sigma_param = torch.full((num_neurons,), sigma)  #standard deviation for each Gaussian function, model learns optimal std dev
 
     def forward(self, x):
         # expected input shape: [batch_size, seq_len, num_features]
@@ -36,7 +49,7 @@ class GaussianRangeFractionatation(nn.Module): #to be used before autoencoder to
         
         # reshape centers & sigmas for broadcasting: [1, 1, 1, num_neurons]
         mu = self.centers.view(1, 1, 1, -1)
-        sigma = self.sigma.view(1, 1, 1, -1)
+        sigma = self.sigma_param.view(1, 1, 1, -1)
         
         # compute Gaussian RBF Activation
         squared_diff = (x_expanded - mu) ** 2
@@ -44,8 +57,9 @@ class GaussianRangeFractionatation(nn.Module): #to be used before autoencoder to
         activations = torch.exp(-squared_diff / variance)
         
         # [batch_size, seq_len, num_features * num_neurons]
-        return activations.view(batch_size, seq_len, -1)
+        return activations.view(batch_size, seq_len, num_features*self.num_neurons)
 
+# autoencoder
 class GRUAutoEncoder(nn.Module):
     def __init__(self, GRF_num_features, pos_num_features, acc_num_features, GRF_neurons, pos_neurons, acc_neurons, hidden_dim, latent_dim):
         super(GRUAutoEncoder, self).__init__()
@@ -60,22 +74,23 @@ class GRUAutoEncoder(nn.Module):
 
         # encoder expects (batch, seq_len, features)
         #seperate the input data into a range of neurons (populations) with seperate streams for each feature, then concatenate the streams into a single input for the GRU
-        self.GRF_fractionation = GaussianRangeFractionatation(num_neurons=GRF_neurons, min_value=-1.0, max_value=1.0)  
-        self.pos_fractionation = GaussianRangeFractionatation(num_neurons=pos_neurons, min_value=-1.0, max_value=1.0)  
-        self.acc_fractionation = GaussianRangeFractionatation(num_neurons=acc_neurons, min_value=-1.0, max_value=1.0)  
+        self.GRF_fractionation = GaussianRangeFractionation(num_neurons=GRF_neurons, min_value=-1.0, max_value=1.0)  
+        self.pos_fractionation = GaussianRangeFractionation(num_neurons=pos_neurons, min_value=-1.0, max_value=1.0)  
+        self.acc_fractionation = GaussianRangeFractionation(num_neurons=acc_neurons, min_value=-1.0, max_value=1.0)  
         
         fractionated_GRF_input_dim = self.GRF_neurons * self.GRF_num_features 
         fractionated_pos_input_dim = self.pos_neurons * self.pos_num_features  
         fractionated_acc_input_dim = self.acc_neurons * self.acc_num_features 
         total_fractionated_input_dim = fractionated_GRF_input_dim + fractionated_pos_input_dim + fractionated_acc_input_dim
+        self.total_fractionated_input_dim = total_fractionated_input_dim 
 
         
         """for encoder function, we will use a GRU to encode the fractionated input data into a latent space of dimension embed_dim"""
-        #shared encoder
-        self.encoder_gru = nn.GRU(input_size=total_fractionated_input_dim, hidden_size=hidden_dim, batch_first=True, num_layers=2)
+        #shared encoder, expects [batch, seq_length, features]
+        self.encoder_gru = nn.GRU(input_size=total_fractionated_input_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
 
         #latent embedding layer to reduce the hidden state to a lower dimension
-        self.latent_layer = nn.Linear(hidden_dim, latent_dim) 
+        self.hidden2latten = nn.Linear(hidden_dim, latent_dim) 
         
         #map latent embedding back to hidden dimension for decoder
         self.latent2hidden = nn.Linear(latent_dim, hidden_dim)
@@ -83,64 +98,103 @@ class GRUAutoEncoder(nn.Module):
         #shared decoder
         self.decoder_gru = nn.GRU(input_size=hidden_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
 
-        #output layer to map back to original feature space
-        self.output2total = nn.Linear(hidden_dim, total_fractionated_input_dim)
-
-        self.outputGRF = nn.Linear(total_fractionated_input_dim, self.GRF_num_features)  #output layer for GRF
-        self.outputPos = nn.Linear(total_fractionated_input_dim, self.pos_num_features)  #output layer for position
-        self.outputAcc = nn.Linear(total_fractionated_input_dim, self.acc_num_features)  #output layer for acceleration
+        self.outputGRF = nn.Linear(hidden_dim, self.GRF_num_features)  #output layer for GRF
+        self.outputPos = nn.Linear(hidden_dim, self.pos_num_features)  #output layer for position
+        self.outputAcc = nn.Linear(hidden_dim, self.acc_num_features)  #output layer for acceleration
 
     def forward(self, GRF_x, pos_x, acc_x):
         #fractionate input data
         #seq should be same value for all inputs, but batch size can be different
-        GRF_batch_size, GRF_seq_len, _ = GRF_x.shape
         GRFfractionated_x = self.GRF_fractionation(GRF_x)  
-
-        pos_batch_size, pos_seq_len, _ = pos_x.shape
         posfractionated_x = self.pos_fractionation(pos_x)  
-
-        acc_batch_size, acc_seq_len, _ = acc_x.shape
         accfractionated_x = self.acc_fractionation(acc_x)  
 
         #concatenate fractionated inputs
         total_fractionated_x = torch.cat((GRFfractionated_x, posfractionated_x, accfractionated_x), dim=2)  #concatenate along feature dimension
+        batch_size, seq_length, _ = total_fractionated_x.shape
 
         #encoder
         _, hidden = self.encoder_gru(total_fractionated_x)  #hidden shape: (num_layers, batch, hidden_dim)
         hidden = hidden[-1]  #take the last layer's hidden state (shape: (batch, hidden_dim))
-        latent_embed = self.latent_layer(hidden)  #project to latent space
-        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, 1, 1)  #expand latent embedding to match sequence length
+        latent_embed = self.hidden2latten(hidden)  #project to latent space
+        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length
+
         #decoder
         latent_to_hidden = self.latent2hidden(latent_embed_expanded)  #map latent embedding back to hidden dimension
         decoder_output, _ = self.decoder_gru(latent_to_hidden)  #decoder output
-        output_total = self.output2total(decoder_output)  #map back to total fractionated input dimension
 
         #seperate the outputs for GRF, position, and acceleration
-        GRF_recon = self.outputGRF(output_total)  #reconstructed GRF
-        pos_recon = self.outputPos(output_total)  #reconstructed position
-        acc_recon = self.outputAcc(output_total)  #reconstructed acceleration
+        GRF_recon = self.outputGRF(decoder_output)  #reconstructed GRF
+        pos_recon = self.outputPos(decoder_output)  #reconstructed position
+        acc_recon = self.outputAcc(decoder_output)  #reconstructed acceleration
 
         return GRF_recon, pos_recon, acc_recon, latent_embed
 
-n_states = 2 #for clustering stance and swing phases
+#kmeans
+class KMeans(nn.Module):
+    def __init__(self, num_clusters):
+        super(KMeans, self).__init__()
+        self.num_clusters = num_clusters
+        self.centroids = None
 
-#load dataset
+    def initialize_centroids(self, latent_data):
+        # randomly initializes centroids from the data points
+        num_samples = latent_data.size(0)
+        random_indices = torch.randperm(num_samples)[:self.num_clusters]
+        self.centroids = latent_data[random_indices].clone().detach()
+
+    def forward(self, latent_data, num_iterations):
+        if self.centroids is None:
+            self.initialize_centroids(latent_data)
+
+        centroids = self.centroids.clone()
+        for _ in range(num_iterations):
+            # calculate distances: output shape [N, K]
+            distances = torch.cdist(latent_data, self.centroids)
+            
+            # assign each point to the closest centroid
+            _, labels = torch.min(distances, dim=1)
+            
+            new_centroids = []
+            for i in range(self.num_clusters):
+                # find all points belonging to cluster i
+                cluster_points = latent_data[labels == i]
+                
+                if len(cluster_points) > 0:
+                    # take the mean to update centroid
+                    new_center = torch.mean(cluster_points, dim=0)
+                else:
+                    # handle empty clusters by re-initializing randomly
+                    new_center = centroids[i] 
+                    
+                new_centroids.append(new_center)
+                
+            centroids = torch.stack(new_centroids)
+
+        self.centroids = centroids.detach()
+        return self.centroids, labels
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 2. load and preprocess data
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 raw_df = pd.read_csv("csv/gait_phase_LH_trajectories.csv").drop(columns=['time']) #only for training autoencoder, already indexed by timestep
 time_vec = pd.read_csv("csv/gait_phase_LH_trajectories.csv")[['time']].values #for plotting data
+n_states = 2 #for clustering stance and swing phases
 
 #preprocess data
-scaler = StandardScaler()
-raw_data = raw_df.values.astype(np.float32)
+def scale_dataframe(dataframe): #seperates dataframe into different modalities and z-norms them
+    scaler = StandardScaler()
+    raw_data = dataframe.values.astype(np.float32)
 
-raw_data_GRF = raw_data[:, :3]  #extract GRF data
-scaled_data_GRF = scaler.fit_transform(raw_data_GRF)
-GRF_dataLoader = torch.utils.data
+    raw_data_GRF = raw_data[:, :3]  #extract GRF data
+    scaled_data_GRF = scaler.fit_transform(raw_data_GRF)
 
-raw_data_pos = raw_data[:, [3,5,7]]  #extract joint kinematics data
-scaled_data_pos = scaler.fit_transform(raw_data_pos)
+    raw_data_pos = raw_data[:, [3,5,7]]  #extract joint kinematics data
+    scaled_data_pos = scaler.fit_transform(raw_data_pos)
 
-raw_data_acc = raw_data[:, [4,6,8]]  #extract joint kinematics data
-scaled_data_acc = scaler.fit_transform(raw_data_acc)
+    raw_data_acc = raw_data[:, [4,6,8]]  #extract joint kinematics data
+    scaled_data_acc = scaler.fit_transform(raw_data_acc)
+    return scaled_data_GRF, scaled_data_pos, scaled_data_acc, raw_data_GRF, raw_data_pos, raw_data_acc
 
 #sequence function adaptation for autoencoder input
 def create_seq(data, seq_length):
@@ -149,9 +203,12 @@ def create_seq(data, seq_length):
         X.append(data[i:i+seq_length]) #past values
     return np.array(X)
 
-X_GRF = create_seq(scaled_data_GRF, seq_length=1) 
-X_pos = create_seq(scaled_data_pos, seq_length=1) 
-X_acc = create_seq(scaled_data_acc, seq_length=1) 
+scaled_GRF, scaled_pos, scaled_acc, raw_data_GRF, raw_data_pos, raw_data_acc = scale_dataframe(raw_df) #raw data to be used for plotting
+
+SEQ_LENGTH = 17
+X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
+X_pos = create_seq(scaled_pos, seq_length=SEQ_LENGTH) 
+X_acc = create_seq(scaled_acc, seq_length=SEQ_LENGTH) 
 
 #convert to tensor
 X_GRFtensor = torch.from_numpy(X_GRF).float() 
@@ -162,87 +219,106 @@ print(f"Input shape (GRF): {X_GRFtensor.shape}")
 print(f"Input shape (position): {X_pos_tensor.shape}")
 print(f"Input shape (acceleration): {X_acc_tensor.shape}")
 
-num_time_steps__GRF = X_GRFtensor.shape[0]
-num_time_steps__pos = X_pos_tensor.shape[0]
-num_time_steps__acc = X_acc_tensor.shape[0]
+orig_num_feature_pos = X_pos_tensor.shape[2] 
+orig_num_feature_GRF = X_GRFtensor.shape[2] 
+orig_num_feature_acc = X_acc_tensor.shape[2] 
 
-print(f"Number of time steps (GRF): {num_time_steps__GRF}")
-print(f"Number of time steps (position): {num_time_steps__pos}")
-print(f"Number of time steps (acceleration): {num_time_steps__acc}")
-
-orig_num_feature_pos = X_pos_tensor.shape[2] #number of features after fractionation
-orig_num_feature_GRF = X_GRFtensor.shape[2] #number of features after fractionation
-orig_num_feature_acc = X_acc_tensor.shape[2] #number of features after fractionation
-
-print(f"Number of features after fractionation (GRF): {orig_num_feature_GRF}")
-print(f"Number of features after fractionation (position): {orig_num_feature_pos}")
-print(f"Number of features after fractionation (acceleration): {orig_num_feature_acc}")
-
-
-#define autoencoder model and clustering model
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 3. Initiazlize Autoencoder
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, pos_num_features=orig_num_feature_pos, acc_num_features=orig_num_feature_acc,
-                           GRF_neurons=40, pos_neurons=10, acc_neurons=20,
-                           hidden_dim=32, latent_dim=4) #GRU autoencoder model
-
-kmeans = KMeans(n_clusters=n_states, random_state=42, n_init=10) #KMeans clustering model
+                           GRF_neurons=3200, pos_neurons=1600, acc_neurons=1600,
+                           hidden_dim=64, latent_dim=3) #GRU autoencoder model
 
 #loss and optimizer definitions
 criterion = nn.MSELoss() #mean squared error loss for regression ( stance vs swing)
 
 optimizer= torch.optim.Adam(model.parameters(), lr = 0.001)
 
+#define loss weights (GRF more important than kinematics)
+ALPHA = 2.0  #weight for GRF
+BETA = 0.5   #weight for Position
+GAMMA = 0.5  #weight for Acceleration
 
-#GRF training loop
+dataset = TensorDataset(X_GRFtensor, X_pos_tensor, X_acc_tensor)
+dataloader = DataLoader(dataset, batch_size=64)
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 4. training loop
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 epochs = 50
 print("Training GRF model... ")
 for epoch in range(epochs):
     model.train()
     
-    optimizer.zero_grad() #clear out previous gradients
-    recon_GRF, recon_pos, recon_acc, latent_total = model(X_GRFtensor, X_pos_tensor, X_acc_tensor) #forward pass
-
-    #seperate the outputs for GRF, position, and acceleration into their respective losses
-    loss_GRF = criterion(recon_GRF, X_GRFtensor) #compute loss
-    loss_pos = criterion(recon_pos, X_pos_tensor) #compute loss
-    loss_acc = criterion(recon_acc, X_acc_tensor) #compute loss
-
-    #combine the losses with weights (GRF is more important than position and acceleration)
-    loss = loss_GRF + loss_pos + loss_acc 
-    loss.backward() #backprop
+    epoch_loss = 0.0
     
-    optimizer.step()  #update weights
+    for batch_GRF, batch_pos, batch_acc in dataloader:
+        optimizer.zero_grad() 
+        
+        #forward pass on the mini-batch
+        recon_GRF, recon_pos, recon_acc, _ = model(batch_GRF, batch_pos, batch_acc) 
+        
+        # compute individual losses
+        loss_GRF = criterion(recon_GRF, batch_GRF) 
+        loss_pos = criterion(recon_pos, batch_pos) 
+        loss_acc = criterion(recon_acc, batch_acc) 
+        
+        # weighted loss combination
+        loss = (ALPHA * loss_GRF) + (BETA * loss_pos) + (GAMMA * loss_acc)
+        
+        loss.backward() 
+        optimizer.step()  
+        
+        epoch_loss += loss.item() * batch_GRF.size(0)
+        
+    #calculate average epoch loss
+    total_epoch_loss = epoch_loss / len(dataloader.dataset)
 
     if (epoch+1) % 10 == 0:
         print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}")
 
 print("Training complete.")
 
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 5. Testing
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model.eval() #stop training
 with torch.no_grad():
     recon_GRF, recon_pos, recon_acc, latent_total = model(X_GRFtensor, X_pos_tensor, X_acc_tensor) #get latent embedding for clustering
 
 print(f"Latent embedding shape (all modalities): {latent_total.shape} for K Means")
 
-#apply K-Means
-cluster_labels = kmeans.fit_predict(latent_total)
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 6. Initialize KMeans model
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+kmeans = KMeans(num_clusters=2)
+centroids, labels = kmeans.forward(latent_data=latent_total, num_iterations=200)
+labels = labels[:-1]
 
-print(f"Clustering complete. Cluster label shape (Multimodal): {cluster_labels.shape}")
+print(f"Clustering complete. Cluster label shape (Multimodal): {labels.shape}")
+print(f"Centroid shape: {centroids.shape}")
 
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 6. plot data
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 """plot clusters"""
 """Clusters position over time of each joint"""
+aligned_time = time_vec[SEQ_LENGTH:]
+
 figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
 ax1, ax2, ax3= axes.flatten()
 
-scatter_1 = ax1.scatter(time_vec, raw_data_pos[:,0], c=cluster_labels)
+scatter_1 = ax1.scatter(aligned_time, raw_data_pos[SEQ_LENGTH:,0], c=labels)
 ax1.set_title("CTi clusters")
 ax1.set_xlabel('time (s)')
 ax1.set_ylabel('position (rads)')
 
-scatter_2 = ax2.scatter(time_vec, raw_data_pos[:, 1], c=cluster_labels)
+scatter_2 = ax2.scatter(aligned_time, raw_data_pos[SEQ_LENGTH:, 1], c=labels)
 ax2.set_title("TrF clusters")
 ax2.set_xlabel('time (s)')
 
-scatter_3 = ax3.scatter(time_vec, raw_data_pos[:, 2], c=cluster_labels)
+scatter_3 = ax3.scatter(aligned_time, raw_data_pos[SEQ_LENGTH:, 2], c=labels)
 ax3.set_title("FTi clusters")
 ax3.set_xlabel('time (s)')
 
@@ -258,25 +334,18 @@ plt.show()
 figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
 ax4, ax5, ax6= axes.flatten()
 
-scatter_4 = ax4.scatter(time_vec, raw_data_GRF[:, 0], c=cluster_labels)
+scatter_4 = ax4.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 0], c=labels, cmap='plasma')
 ax4.set_title("GRF x-axis")
 ax4.set_xlabel('time (s)')
 ax4.set_ylabel('force (N)')
 
-scatter_5 = ax5.scatter(time_vec, raw_data_GRF[:, 1], c=cluster_labels)
+scatter_5 = ax5.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 1], c=labels, cmap='plasma')
 ax5.set_title("GRF y-axis")
 ax5.set_xlabel('time (s)')
 
-scatter_6 = ax6.scatter(time_vec, raw_data_GRF[:, 2], c=cluster_labels)
+scatter_6 = ax6.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 2], c=labels, cmap='plasma')
 ax6.set_title("GRF z-axis")
 ax6.set_xlabel('time (s)')
+cbar = figure.colorbar(scatter_6, ax=ax6, ticks=[0, 1])
+cbar.ax.set_yticklabels(['Swing', 'Stance'])
 plt.show()
-
-"""add cluster labels to csv to be our ground truths"""
-"""
-aligned_df = pd.read_csv("csv/gait_phase_LH_trajectories.csv")
-output_labels = np.full(len(aligned_df), np.nan)
-output_labels[-len(cluster_labels_GRF):] = cluster_labels_GRF
-aligned_df['cluster labels'] = output_labels
-aligned_df.to_csv("csv/gait_phase_LH_trajectories_wGroundTruths.csv", index=False)
-print("Saved outputs successfully.") """
