@@ -38,7 +38,7 @@ class GaussianRangeFractionation(nn.Module): #to be used before autoencoder to f
         centers = torch.linspace(min_value, max_value, num_neurons)  #centers of the Gaussian functions
         self.register_buffer('centers',centers) #register centers as a buffer (fixed tensor that is not a parameter)
 
-        self.sigma_param = torch.full((num_neurons,), sigma)  #standard deviation for each Gaussian function, model learns optimal std dev
+        self.sigma_param = torch.full((num_neurons,), sigma)  #standard deviation for each Gaussian function, model learns optimal std dev (size is 1d tensor of size num_neurons)
 
     def forward(self, x):
         # expected input shape: [batch_size, seq_len, num_features]
@@ -53,7 +53,7 @@ class GaussianRangeFractionation(nn.Module): #to be used before autoencoder to f
         
         # compute Gaussian RBF Activation
         squared_diff = (x_expanded - mu) ** 2
-        variance = 2.0 * (sigma ** 2) + 1e-8 # 1e-8 prevents division by zero if sigma -> 0
+        variance = 2.0 * (sigma ** 2) + 1e-12 # 1e-12 prevents division by zero if sigma -> 0
         activations = torch.exp(-squared_diff / variance)
         
         # [batch_size, seq_len, num_features * num_neurons]
@@ -205,7 +205,7 @@ def create_seq(data, seq_length):
 
 scaled_GRF, scaled_pos, scaled_acc, raw_data_GRF, raw_data_pos, raw_data_acc = scale_dataframe(raw_df) #raw data to be used for plotting
 
-SEQ_LENGTH = 17
+SEQ_LENGTH = 6 #best if sequence length is a diviser of the number of time steps
 X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
 X_pos = create_seq(scaled_pos, seq_length=SEQ_LENGTH) 
 X_acc = create_seq(scaled_acc, seq_length=SEQ_LENGTH) 
@@ -228,12 +228,12 @@ orig_num_feature_acc = X_acc_tensor.shape[2]
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, pos_num_features=orig_num_feature_pos, acc_num_features=orig_num_feature_acc,
                            GRF_neurons=3200, pos_neurons=1600, acc_neurons=1600,
-                           hidden_dim=64, latent_dim=3) #GRU autoencoder model
+                           hidden_dim=64, latent_dim=1) #GRU autoencoder model
 
 #loss and optimizer definitions
 criterion = nn.MSELoss() #mean squared error loss for regression ( stance vs swing)
 
-optimizer= torch.optim.Adam(model.parameters(), lr = 0.001)
+optimizer= torch.optim.Adam(model.parameters(), lr = 0.01)
 
 #define loss weights (GRF more important than kinematics)
 ALPHA = 2.0  #weight for GRF
@@ -246,7 +246,7 @@ dataloader = DataLoader(dataset, batch_size=64)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 4. training loop
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-epochs = 50
+epochs = 100
 print("Training GRF model... ")
 for epoch in range(epochs):
     model.train()
@@ -293,8 +293,8 @@ print(f"Latent embedding shape (all modalities): {latent_total.shape} for K Mean
 # 6. Initialize KMeans model
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 kmeans = KMeans(num_clusters=2)
-centroids, labels = kmeans.forward(latent_data=latent_total, num_iterations=200)
-labels = labels[:-1]
+centroids, labels = kmeans.forward(latent_data=latent_total, num_iterations=100)
+labels = labels[:-1] #will have indexing error for plotting if this is not here
 
 print(f"Clustering complete. Cluster label shape (Multimodal): {labels.shape}")
 print(f"Centroid shape: {centroids.shape}")
@@ -330,7 +330,6 @@ plt.show()
 
 """Comparison of GRFs and cluster assignment"""
 #plot clusters
-"""Clusters position over time of each joint"""
 figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
 ax4, ax5, ax6= axes.flatten()
 
