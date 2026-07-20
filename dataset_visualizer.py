@@ -8,16 +8,16 @@ import matplotlib.pyplot as plt
 raw_df = pd.read_csv("csv/gait_phase_LH_trajectories.csv")
 time = raw_df["time"]
 
-step = 1 #per second
+step = 1 #per 2ms
 time_downsamp =time[::step]
 
-LH_CTr_pos = raw_df["LH_CTr_pos"]
-LH_TrF_pos = raw_df["LH_TrF_pos"]
-LH_FTi_pos = raw_df["LH_FTi_pos"]
+LH_CTr_theta = raw_df["LH_CTr_theta"]
+LH_TrF_theta = raw_df["LH_TrF_theta"]
+LH_FTi_theta = raw_df["LH_FTi_theta"]
 
-LH_CTr_acc = raw_df["LH_CTr_acc"]
-LH_TrF_acc = raw_df["LH_TrF_acc"]
-LH_FTi_acc = raw_df["LH_FTi_acc"]
+LH_CTr_vel = raw_df["LH_CTr_vel"]
+LH_TrF_vel = raw_df["LH_TrF_vel"]
+LH_FTi_vel = raw_df["LH_FTi_vel"]
 
 GRF_x = raw_df["LH_GRF_x"]
 GRF_y = raw_df["LH_GRF_y"]
@@ -26,28 +26,28 @@ GRF_z = raw_df["LH_GRF_z"]
 figure, axes = plt.subplots(nrows=2, ncols=3, figsize=(10,10), sharex=True)
 ax1, ax2, ax3, ax4, ax5, ax6 = axes.flatten()
 
-ax1.plot(time_downsamp, LH_CTr_pos[::step], label="LH_CTr_pos")
+ax1.plot(time_downsamp, LH_CTr_theta[::step], label="LH_CTr_theta")
 ax1.set_ylabel('Radians (rads)')
-ax1.set_title('LH_CTr_pos')
+ax1.set_title('LH_CTr_theta')
 
-ax2.plot(time_downsamp, LH_TrF_pos[::step], label="LH_TrF_pos")
-ax2.set_title('LH_TrF_pos')
+ax2.plot(time_downsamp, LH_TrF_theta[::step], label="LH_TrF_theta")
+ax2.set_title('LH_TrF_theta')
 
-ax3.plot(time_downsamp, LH_FTi_pos[::step], label="LH_FTi_pos")
-ax3.set_title('LH_FTi_pos')
+ax3.plot(time_downsamp, LH_FTi_theta[::step], label="LH_FTi_theta")
+ax3.set_title('LH_FTi_theta')
 
-ax4.plot(time_downsamp, LH_CTr_acc[::step], label="LH_CTr_acc")
+ax4.plot(time_downsamp, LH_CTr_vel[::step], label="LH_CTr_vel")
 ax4.set_xlabel('Time (s)')
-ax4.set_ylabel('Radians per sec^2 (rads/s^2)')
-ax4.set_title('LH_TrF_acc')
+ax4.set_ylabel('Radians per sec (rads/s)')
+ax4.set_title('LH_TrF_vel')
 
-ax5.plot(time_downsamp, LH_TrF_acc[::step], label="LH_TrF_acc")
+ax5.plot(time_downsamp, LH_TrF_vel[::step], label="LH_TrF_vel")
 ax5.set_xlabel('Time (s)')
-ax5.set_title('LH_TrF_acc')
+ax5.set_title('LH_TrF_vel')
 
-ax6.plot(time_downsamp, LH_FTi_acc[::step], label="LH_FTi_acc")
+ax6.plot(time_downsamp, LH_FTi_vel[::step], label="LH_FTi_vel")
 ax6.set_xlabel('Time (s)')
-ax6.set_title('LH_FTi_acc')
+ax6.set_title('LH_FTi_vel')
 
 plt.show()
 

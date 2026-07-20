@@ -15,19 +15,18 @@ and K-Means clustering to cluster joint kinematic and GRF data to either stance 
 # 0. Set random seed to make models deterministic
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 def deterministic(seed=42):
-    #sets seeds for python and pytorch random number generators
+    #sets seeds (starting point) for python and pytorch random number generators
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.use_deterministic_algorithms(True)
 
 deterministic(seed=42)
-
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 1. Define Models
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # range fractionation
-class GaussianRangeFractionation(nn.Module): #to be used before autoencoder to fractionate the input data into a range of neurons (acts as encoder)
+class GaussianRangeFractionation(nn.Module): # to be used before autoencoder to fractionate the input data into a range of neurons (acts as encoder)
     def __init__(self, num_neurons, min_value, max_value, sigma=0.1):
         super(GaussianRangeFractionation, self).__init__()
         self.num_neurons = num_neurons
@@ -35,10 +34,10 @@ class GaussianRangeFractionation(nn.Module): #to be used before autoencoder to f
         self.max_value = max_value
         self.sigma = sigma
 
-        centers = torch.linspace(min_value, max_value, num_neurons)  #centers of the Gaussian functions
-        self.register_buffer('centers',centers) #register centers as a buffer (fixed tensor that is not a parameter)
+        centers = torch.linspace(min_value, max_value, num_neurons)  # centers of the Gaussian functions
+        self.register_buffer('centers',centers) # register centers as a buffer (fixed tensor that is not a parameter)
 
-        self.sigma_param = torch.full((num_neurons,), sigma)  #standard deviation for each Gaussian function, model learns optimal std dev (size is 1d tensor of size num_neurons)
+        self.sigma_param = torch.full((num_neurons,), sigma)  # width of bell curves (1d tensor of size num_neurons)
 
     def forward(self, x):
         # expected input shape: [batch_size, seq_len, num_features]
@@ -53,7 +52,7 @@ class GaussianRangeFractionation(nn.Module): #to be used before autoencoder to f
         
         # compute Gaussian RBF Activation
         squared_diff = (x_expanded - mu) ** 2
-        variance = 2.0 * (sigma ** 2) + 1e-12 # 1e-12 prevents division by zero if sigma -> 0
+        variance = 2.0 * (sigma ** 2)
         activations = torch.exp(-squared_diff / variance)
         
         # [batch_size, seq_len, num_features * num_neurons]
@@ -84,7 +83,6 @@ class GRUAutoEncoder(nn.Module):
         total_fractionated_input_dim = fractionated_GRF_input_dim + fractionated_pos_input_dim + fractionated_acc_input_dim
         self.total_fractionated_input_dim = total_fractionated_input_dim 
 
-        
         """for encoder function, we will use a GRU to encode the fractionated input data into a latent space of dimension embed_dim"""
         #shared encoder, expects [batch, seq_length, features]
         self.encoder_gru = nn.GRU(input_size=total_fractionated_input_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
@@ -104,7 +102,7 @@ class GRUAutoEncoder(nn.Module):
 
     def forward(self, GRF_x, pos_x, acc_x):
         #fractionate input data
-        #seq should be same value for all inputs, but batch size can be different
+        #seq should be same value for all inputs
         GRFfractionated_x = self.GRF_fractionation(GRF_x)  
         posfractionated_x = self.pos_fractionation(pos_x)  
         accfractionated_x = self.acc_fractionation(acc_x)  
@@ -117,7 +115,7 @@ class GRUAutoEncoder(nn.Module):
         _, hidden = self.encoder_gru(total_fractionated_x)  #hidden shape: (num_layers, batch, hidden_dim)
         hidden = hidden[-1]  #take the last layer's hidden state (shape: (batch, hidden_dim))
         latent_embed = self.hidden2latten(hidden)  #project to latent space
-        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length
+        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length *add on to this bestie
 
         #decoder
         latent_to_hidden = self.latent2hidden(latent_embed_expanded)  #map latent embedding back to hidden dimension
@@ -140,7 +138,9 @@ class KMeans(nn.Module):
     def initialize_centroids(self, latent_data):
         # randomly initializes centroids from the data points
         num_samples = latent_data.size(0)
+        # creates 1d tensor containing random permutation of integers from 0 to num_samples - 1 and grabs first k indices
         random_indices = torch.randperm(num_samples)[:self.num_clusters]
+        # use random indices to get k random samples
         self.centroids = latent_data[random_indices].clone().detach()
 
     def forward(self, latent_data, num_iterations):
@@ -150,10 +150,10 @@ class KMeans(nn.Module):
         centroids = self.centroids.clone()
         for _ in range(num_iterations):
             # calculate distances: output shape [N, K]
-            distances = torch.cdist(latent_data, self.centroids)
+            distances = torch.cdist(latent_data, self.centroids) # euclidean norm
             
             # assign each point to the closest centroid
-            _, labels = torch.min(distances, dim=1)
+            labels = torch.argmin(distances, dim=1)
             
             new_centroids = []
             for i in range(self.num_clusters):
@@ -173,7 +173,6 @@ class KMeans(nn.Module):
 
         self.centroids = centroids.detach()
         return self.centroids, labels
-
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 2. load and preprocess data
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -205,7 +204,7 @@ def create_seq(data, seq_length):
 
 scaled_GRF, scaled_pos, scaled_acc, raw_data_GRF, raw_data_pos, raw_data_acc = scale_dataframe(raw_df) #raw data to be used for plotting
 
-SEQ_LENGTH = 6 #best if sequence length is a diviser of the number of time steps
+SEQ_LENGTH = 6 #best if sequence length is a diviser of the number of time steps *why tho?
 X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
 X_pos = create_seq(scaled_pos, seq_length=SEQ_LENGTH) 
 X_acc = create_seq(scaled_acc, seq_length=SEQ_LENGTH) 
@@ -228,17 +227,17 @@ orig_num_feature_acc = X_acc_tensor.shape[2]
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, pos_num_features=orig_num_feature_pos, acc_num_features=orig_num_feature_acc,
                            GRF_neurons=3200, pos_neurons=1600, acc_neurons=1600,
-                           hidden_dim=64, latent_dim=1) #GRU autoencoder model
+                           hidden_dim=64, latent_dim=1) #GRU autoencoder model *add noise to data?
 
 #loss and optimizer definitions
-criterion = nn.MSELoss() #mean squared error loss for regression ( stance vs swing)
+criterion = nn.MSELoss() #mean squared error loss for data reconstruction
 
 optimizer= torch.optim.Adam(model.parameters(), lr = 0.01)
 
 #define loss weights (GRF more important than kinematics)
-ALPHA = 2.0  #weight for GRF
-BETA = 0.5   #weight for Position
-GAMMA = 0.5  #weight for Acceleration
+ALPHA = 3.0  #weight for GRF
+BETA = 1.0   #weight for Position
+GAMMA = 1.0  #weight for Acceleration
 
 dataset = TensorDataset(X_GRFtensor, X_pos_tensor, X_acc_tensor)
 dataloader = DataLoader(dataset, batch_size=64)
@@ -246,7 +245,7 @@ dataloader = DataLoader(dataset, batch_size=64)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 4. training loop
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-epochs = 100
+epochs = 50
 print("Training GRF model... ")
 for epoch in range(epochs):
     model.train()
@@ -267,13 +266,8 @@ for epoch in range(epochs):
         # weighted loss combination
         loss = (ALPHA * loss_GRF) + (BETA * loss_pos) + (GAMMA * loss_acc)
         
-        loss.backward() 
-        optimizer.step()  
-        
-        epoch_loss += loss.item() * batch_GRF.size(0)
-        
-    #calculate average epoch loss
-    total_epoch_loss = epoch_loss / len(dataloader.dataset)
+        loss.backward() # backprop
+        optimizer.step()  # update parameter
 
     if (epoch+1) % 10 == 0:
         print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}")
@@ -302,28 +296,53 @@ print(f"Centroid shape: {centroids.shape}")
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 6. plot data
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-"""plot clusters"""
-"""Clusters position over time of each joint"""
 aligned_time = time_vec[SEQ_LENGTH:]
+"""plot range fractionated input """
+range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)
+pos_frac = range_frac_inst(X_pos_tensor).detach().cpu().numpy()
 
+figure, axes = plt.subplots(nrows=1, ncols=4, figsize=(20,25))
+ax7, ax8, ax9, ax10 = axes.flatten()
+
+ax7.plot(pos_frac[:, :, 0])
+ax7.set_title("CTi Joint Fractionation")
+ax7.set_xlabel('time steps (per 2 ms)')
+ax7.set_ylabel('magnitude')
+
+ax8.plot(pos_frac[:, :, 1])
+ax8.set_title("TrF Joint Fractionation")
+ax8.set_xlabel('time steps (per 2 ms)')
+
+ax9.plot(pos_frac[:, :, 2])
+ax9.set_title("FTi Joint Fractionation")
+ax9.set_xlabel('time steps (per 2 ms)')
+
+ax10.plot(pos_frac[:, -1, :])
+ax10.set_title("All 3 Joints Fractionation")
+ax10.set_xlabel('time steps (per 2 ms)')
+figure.suptitle("Range Fractionated Joint Angles")
+plt.show()
+
+
+"""angles over time of each joint"""
 figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
 ax1, ax2, ax3= axes.flatten()
 
 scatter_1 = ax1.scatter(aligned_time, raw_data_pos[SEQ_LENGTH:,0], c=labels)
-ax1.set_title("CTi clusters")
+ax1.set_title("CTi angles")
 ax1.set_xlabel('time (s)')
-ax1.set_ylabel('position (rads)')
+ax1.set_ylabel('joint angle (rads)')
 
 scatter_2 = ax2.scatter(aligned_time, raw_data_pos[SEQ_LENGTH:, 1], c=labels)
-ax2.set_title("TrF clusters")
-ax2.set_xlabel('time (s)')
+ax2.set_title("TrF angles")
+ax2.set_xlabel('joint angle (s)')
 
 scatter_3 = ax3.scatter(aligned_time, raw_data_pos[SEQ_LENGTH:, 2], c=labels)
-ax3.set_title("FTi clusters")
+ax3.set_title("FTi angles")
 ax3.set_xlabel('time (s)')
 
 cbar = figure.colorbar(scatter_3, ax=ax3, ticks=[0, 1])
-cbar.ax.set_yticklabels(['Swing', 'Stance'])
+cbar.ax.set_yticklabels(['Stance', 'Swing'])
 
 figure.suptitle('LH leg Gait Classification of a Single Cycle')
 plt.show()
@@ -346,5 +365,12 @@ scatter_6 = ax6.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 2], c=labels, cm
 ax6.set_title("GRF z-axis")
 ax6.set_xlabel('time (s)')
 cbar = figure.colorbar(scatter_6, ax=ax6, ticks=[0, 1])
-cbar.ax.set_yticklabels(['Swing', 'Stance'])
+cbar.ax.set_yticklabels(['Stance', 'Swing'])
 plt.show()
+
+"""
+for testing, maybe try different walking directions *with* noise?
+try with just GRF z force and no other information
+instead of acc, try vel 
+
+"""

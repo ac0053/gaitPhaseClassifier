@@ -256,7 +256,7 @@ for leg_idx in range(num_legs):
     num_matched_joints = len(matched_joints)
 
     for j_name in matched_joints:
-        csv_headers.extend([f"{j_name}_pos", f"{j_name}_acc"])
+        csv_headers.extend([f"{j_name}_theta", f"{j_name}_vel"])
 
     # Extract data grid for current leg
     samples_per_traj = full_kinematics[leg_idx, 0, 0].shape[1]
@@ -271,9 +271,14 @@ for leg_idx in range(num_legs):
         row_data.extend([grf_arr[0], grf_arr[1], grf_arr[2]])
 
         for joint_local_idx in range(num_matched_joints):
-            pos_val = leg_grid[0, 0][joint_local_idx, t_step]
-            acc_val = leg_grid[2, 0][joint_local_idx, t_step]
-            row_data.extend([pos_val, acc_val])
+            theta_val = leg_grid[0, 0][joint_local_idx, t_step]
+            if t_step > 0:
+                prev_theta_val = leg_grid[0, 0][joint_local_idx, t_step - 1]
+                d_theta = theta_val - prev_theta_val
+                vel_val = d_theta / dt
+            else:
+                vel_val = 0 #starting velocity
+            row_data.extend([theta_val, vel_val])
 
         all_time_steps.append(row_data)
 
