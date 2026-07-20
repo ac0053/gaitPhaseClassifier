@@ -37,7 +37,7 @@ class GaussianRangeFractionation(nn.Module): # to be used before autoencoder to 
         centers = torch.linspace(min_value, max_value, num_neurons)  # centers of the Gaussian functions
         self.register_buffer('centers',centers) # register centers as a buffer (fixed tensor that is not a parameter)
 
-        self.sigma_param = torch.full((num_neurons,), sigma)  # width of bell curves (1d tensor of size num_neurons)
+        self.sigma_param = nn.Parameter(torch.full((num_neurons,), sigma))  # width of bell curves (1d tensor of size num_neurons)
 
     def forward(self, x):
         # expected input shape: [batch_size, seq_len, num_features]
@@ -371,6 +371,5 @@ plt.show()
 """
 for testing, maybe try different walking directions *with* noise?
 try with just GRF z force and no other information
-instead of vel, try vel 
 
 """

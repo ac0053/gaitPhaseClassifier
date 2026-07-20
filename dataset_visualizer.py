@@ -39,7 +39,7 @@ ax3.set_title('LH_FTi_theta')
 ax4.plot(time_downsamp, LH_CTr_vel[::step], label="LH_CTr_vel")
 ax4.set_xlabel('Time (s)')
 ax4.set_ylabel('Radians per sec (rads/s)')
-ax4.set_title('LH_TrF_vel')
+ax4.set_title('LH_CTr_vel')
 
 ax5.plot(time_downsamp, LH_TrF_vel[::step], label="LH_TrF_vel")
 ax5.set_xlabel('Time (s)')
