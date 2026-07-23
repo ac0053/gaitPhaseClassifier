@@ -23,8 +23,8 @@ GRF_x = raw_df["LH_GRF_x"]
 GRF_y = raw_df["LH_GRF_y"]
 GRF_z = raw_df["LH_GRF_z"]
 
-figure, axes = plt.subplots(nrows=2, ncols=3, figsize=(10,10), sharex=True)
-ax1, ax2, ax3, ax4, ax5, ax6 = axes.flatten()
+figure, axes = plt.subplots(nrows=3, ncols=3, figsize=(10,10), sharex=True)
+ax1, ax2, ax3, ax4, ax5, ax6, ax_x, ax_y, ax_z = axes.flatten()
 
 ax1.plot(time_downsamp, LH_CTr_theta[::step], label="LH_CTr_theta")
 ax1.set_ylabel('Radians (rads)')
@@ -37,22 +37,15 @@ ax3.plot(time_downsamp, LH_FTi_theta[::step], label="LH_FTi_theta")
 ax3.set_title('LH_FTi_theta')
 
 ax4.plot(time_downsamp, LH_CTr_vel[::step], label="LH_CTr_vel")
-ax4.set_xlabel('Time (s)')
 ax4.set_ylabel('Radians per sec (rads/s)')
 ax4.set_title('LH_CTr_vel')
 
 ax5.plot(time_downsamp, LH_TrF_vel[::step], label="LH_TrF_vel")
-ax5.set_xlabel('Time (s)')
 ax5.set_title('LH_TrF_vel')
 
 ax6.plot(time_downsamp, LH_FTi_vel[::step], label="LH_FTi_vel")
-ax6.set_xlabel('Time (s)')
 ax6.set_title('LH_FTi_vel')
 
-plt.show()
-
-figure_GRF, axes_GRF = plt.subplots(nrows=1, ncols=3, figsize=(10,10), sharex=True)
-ax_x, ax_y, ax_z = axes_GRF.flatten()
 ax_x.plot(time_downsamp, GRF_x[::step], label="GRF_x")
 ax_x.set_xlabel('time (s)')
 ax_x.set_ylabel('Force (N)')
@@ -65,4 +58,5 @@ ax_y.set_title('GRF_y')
 ax_z.plot(time_downsamp, GRF_z[::step], label="GRF_z")
 ax_z.set_xlabel('time (s)')
 ax_z.set_title('GRF_z')
+figure.suptitle('Neural Network Inputs')
 plt.show()

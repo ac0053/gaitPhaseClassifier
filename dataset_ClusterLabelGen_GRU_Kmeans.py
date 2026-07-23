@@ -37,7 +37,7 @@ class GaussianRangeFractionation(nn.Module): # to be used before autoencoder to 
         centers = torch.linspace(min_value, max_value, num_neurons)  # centers of the Gaussian functions
         self.register_buffer('centers',centers) # register centers as a buffer (fixed tensor that is not a parameter)
 
-        self.sigma_param = nn.Parameter(torch.full((num_neurons,), sigma))  # width of bell curves (1d tensor of size num_neurons)
+        self.sigma_param = torch.full((num_neurons,), sigma)  # width of bell curves (1d tensor of size num_neurons)
 
     def forward(self, x):
         # expected input shape: [batch_size, seq_len, num_features]
@@ -88,17 +88,17 @@ class GRUAutoEncoder(nn.Module):
         self.encoder_gru = nn.GRU(input_size=total_fractionated_input_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
 
         #latent embedding layer to reduce the hidden state to a lower dimension
-        self.hidden2latten = nn.Linear(hidden_dim, latent_dim) 
+        self.encoder_fc = nn.Linear(hidden_dim, latent_dim) 
         
         #map latent embedding back to hidden dimension for decoder
-        self.latent2hidden = nn.Linear(latent_dim, hidden_dim)
+        self.decoder_fc = nn.Linear(latent_dim, hidden_dim)
 
         #shared decoder
         self.decoder_gru = nn.GRU(input_size=hidden_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
 
-        self.outputGRF = nn.Linear(hidden_dim, self.GRF_num_features)  #output layer for GRF
-        self.outputtheta = nn.Linear(hidden_dim, self.theta_num_features)  #output layer for thetaition
-        self.outputvel = nn.Linear(hidden_dim, self.vel_num_features)  #output layer for veleleration
+        self.GRF_fc = nn.Linear(hidden_dim, self.GRF_num_features)  #output layer for GRF
+        self.theta_fc = nn.Linear(hidden_dim, self.theta_num_features)  #output layer for thetaition
+        self.vel_fc = nn.Linear(hidden_dim, self.vel_num_features)  #output layer for veleleration
 
     def forward(self, GRF_x, theta_x, vel_x):
         #fractionate input data
@@ -114,17 +114,17 @@ class GRUAutoEncoder(nn.Module):
         #encoder
         _, hidden = self.encoder_gru(total_fractionated_x)  #hidden shape: (num_layers, batch, hidden_dim)
         hidden = hidden[-1]  #take the last layer's hidden state (shape: (batch, hidden_dim))
-        latent_embed = self.hidden2latten(hidden)  #project to latent space
+        latent_embed = self.encoder_fc(hidden)  #project to latent space
         latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length *add on to this bestie
 
         #decoder
-        latent_to_hidden = self.latent2hidden(latent_embed_expanded)  #map latent embedding back to hidden dimension
+        latent_to_hidden = self.decoder_fc(latent_embed_expanded)  #map latent embedding back to hidden dimension
         decoder_output, _ = self.decoder_gru(latent_to_hidden)  #decoder output
 
         #seperate the outputs for GRF, thetaition, and veleleration
-        GRF_recon = self.outputGRF(decoder_output)  #reconstructed GRF
-        theta_recon = self.outputtheta(decoder_output)  #reconstructed thetaition
-        vel_recon = self.outputvel(decoder_output)  #reconstructed veleleration
+        GRF_recon = self.GRF_fc(decoder_output)  #reconstructed GRF
+        theta_recon = self.theta_fc(decoder_output)  #reconstructed thetaition
+        vel_recon = self.vel_fc(decoder_output)  #reconstructed veleleration
 
         return GRF_recon, theta_recon, vel_recon, latent_embed
 
@@ -169,7 +169,7 @@ class KMeans(nn.Module):
                     
                 new_centroids.append(new_center)
                 
-            centroids = torch.stack(new_centroids)
+            centroids = torch.stack(new_centroids) # concatenates sequence of tensors along a new dimension
 
         self.centroids = centroids.detach()
         return self.centroids, labels
@@ -223,7 +223,7 @@ orig_num_feature_GRF = X_GRFtensor.shape[2]
 orig_num_feature_vel = X_vel_tensor.shape[2] 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 3. Initiazlize Autoencoder
+# 3. Initiazlize Autoencoder and set up model visualization
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
                            GRF_neurons=3200, theta_neurons=1600, vel_neurons=1600,
@@ -239,14 +239,14 @@ ALPHA = 3.0  #weight for GRF
 BETA = 1.0   #weight for joint angles
 GAMMA = 1.0  #weight for velocity
 
+# concatenate into a tensor dataset and then dataloader to go through each tensor in chunks of 64
 dataset = TensorDataset(X_GRFtensor, X_theta_tensor, X_vel_tensor)
 dataloader = DataLoader(dataset, batch_size=64)
-
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 4. training loop
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-epochs = 50
-print("Training GRF model... ")
+epochs = 100
+print("Training model... ")
 for epoch in range(epochs):
     model.train()
     
@@ -273,16 +273,14 @@ for epoch in range(epochs):
         print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}")
 
 print("Training complete.")
-
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 5. Testing
+# 5. Testing and Autoencoder Visualization
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model.eval() #stop training
 with torch.no_grad():
     recon_GRF, recon_theta, recon_vel, latent_total = model(X_GRFtensor, X_theta_tensor, X_vel_tensor) #get latent embedding for clustering
 
 print(f"Latent embedding shape (all modalities): {latent_total.shape} for K Means")
-
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 6. Initialize KMeans model
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -298,7 +296,7 @@ print(f"Centroid shape: {centroids.shape}")
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 aligned_time = time_vec[SEQ_LENGTH:]
 """plot range fractionated input """
-range_frac_inst = GaussianRangeFractionation(num_neurons=5, min_value=-1.0, max_value=1.0)
+range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)
 theta_frac = range_frac_inst(X_theta_tensor).detach().cpu().numpy()
 
 figure, axes = plt.subplots(nrows=1, ncols=4, figsize=(10,15))
@@ -342,7 +340,7 @@ ax3.set_title("FTi angles")
 ax3.set_xlabel('time (s)')
 
 cbar = figure.colorbar(scatter_3, ax=ax3, ticks=[0, 1])
-cbar.ax.set_yticklabels(['Stance', 'Swing'])
+cbar.ax.set_yticklabels(['Swing', 'Stance'])
 
 figure.suptitle('LH leg Gait Classification of a Single Cycle')
 plt.show()
@@ -365,7 +363,8 @@ scatter_6 = ax6.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 2], c=labels, cm
 ax6.set_title("GRF z-axis")
 ax6.set_xlabel('time (s)')
 cbar = figure.colorbar(scatter_6, ax=ax6, ticks=[0, 1])
-cbar.ax.set_yticklabels(['Stance', 'Swing'])
+cbar.ax.set_yticklabels(['Swing', 'Stance'])
+figure.suptitle('LH leg Gait Classification of a Single Cycle')
 plt.show()
 
 """
