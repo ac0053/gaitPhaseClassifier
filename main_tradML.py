@@ -1,0 +1,167 @@
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import random
+from models.RangeFractionation import GaussianRangeFractionation
+from models.GRU_Autoencoder import GRUAutoEncoder
+from models.KMeansClustering import KMeans
+from data_graphs.visualizer import Visualizer
+
+
+"""Script utilizes range-fractionated data for GRU autoencoder to lower feature dimensions 
+and K-Means clustering to cluster joint kinematics and GRF data to either stance or swing phase"""
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 0. Set Random Seed to Make Models Deterministic
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+def deterministic(seed=42):
+    # sets seeds (starting point) for python and pytorch random number generators
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True) # makes sure algorithms used in models are deterministic
+
+deterministic(seed=42)
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 1. Load and Pre-process Features
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv").drop(columns=['time']) # only for training autoencoder, already indexed by timestep
+time_vec = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv")[['time']].values # for plotting data
+n_states = 2 # for clustering stance and swing phases
+
+# preprocess data
+def scale_dataframe(dataframe): # seperates dataframe into different sensor streams and z-norms them
+    scaler = StandardScaler()
+    raw_data = dataframe.values.astype(np.float32)
+
+    raw_data_GRF = raw_data[:, :3]  # extract ground reaction force (GRF) data
+    scaled_data_GRF = scaler.fit_transform(raw_data_GRF)
+
+    raw_data_theta = raw_data[:, [3,5,7]]  # extract joint angle data
+    scaled_data_theta = scaler.fit_transform(raw_data_theta)
+
+    raw_data_vel = raw_data[:, [4,6,8]]  #extract joint velocity data
+    scaled_data_vel = scaler.fit_transform(raw_data_vel)
+    return scaled_data_GRF, scaled_data_theta, scaled_data_vel, raw_data_GRF, raw_data_theta, raw_data_vel
+
+# sequence function adaptation for autoencoder input
+def create_seq(data, seq_length):
+    X= []
+    for i in range(len(data) - seq_length + 1):
+        X.append(data[i:i+seq_length]) #past values
+    return np.array(X)
+
+scaled_GRF, scaled_theta, scaled_vel, raw_data_GRF, raw_data_theta, raw_data_vel = scale_dataframe(raw_df) # raw data to be used for plotting
+
+SEQ_LENGTH = 6 
+X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
+X_theta = create_seq(scaled_theta, seq_length=SEQ_LENGTH) 
+X_vel = create_seq(scaled_vel, seq_length=SEQ_LENGTH) 
+
+# convert to tensor
+X_GRFtensor = torch.from_numpy(X_GRF).float() 
+X_theta_tensor = torch.from_numpy(X_theta).float()
+X_vel_tensor = torch.from_numpy(X_vel).float()
+
+print(f"Input shape (GRF): {X_GRFtensor.shape}")
+print(f"Input shape (joint angles): {X_theta_tensor.shape}")
+print(f"Input shape (velocity): {X_vel_tensor.shape}")
+
+# get number of features for each sesnor stream to be used in model initialization
+orig_num_feature_theta = X_theta_tensor.shape[2] 
+orig_num_feature_GRF = X_GRFtensor.shape[2] 
+orig_num_feature_vel = X_vel_tensor.shape[2] 
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 3. Initiazlize Models
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
+                           GRF_neurons=3200, theta_neurons=1600, vel_neurons=1600,
+                           hidden_dim=64, latent_dim=1) # GRU autoencoder model -> want latent_dim to be 1 to make post-processing simple
+
+kmeans = KMeans(num_clusters=2) # for post-processing
+
+# loss and optimizer definitions
+criterion = nn.MSELoss() # mean squared error loss for data reconstruction
+optimizer= torch.optim.Adam(model.parameters(), lr = 0.01)
+
+#define loss weights (GRF more important than kinematics)
+ALPHA = 3.0  #weight for GRF
+BETA = 1.0   #weight for joint angles
+GAMMA = 1.0  #weight for velocity
+
+# concatenate into a tensor dataset and then dataloader to go through each tensor in chunks of 64
+dataset = TensorDataset(X_GRFtensor, X_theta_tensor, X_vel_tensor)
+dataloader = DataLoader(dataset, batch_size=64)
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 4. Training Loop 
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# focus is on optimizing reconstruction loss to gain more representative latent embedding
+epochs = 100
+print("Training model... ")
+for epoch in range(epochs):
+    model.train()
+    
+    epoch_loss = 0.0
+    
+    for batch_GRF, batch_theta, batch_vel in dataloader:
+        optimizer.zero_grad() 
+        
+        #forward pass on the mini-batch
+        recon_GRF, recon_theta, recon_vel, _ = model(batch_GRF, batch_theta, batch_vel) 
+        
+        # compute individual losses
+        loss_GRF = criterion(recon_GRF, batch_GRF) 
+        loss_theta = criterion(recon_theta, batch_theta) 
+        loss_vel = criterion(recon_vel, batch_vel) 
+        
+        # weighted loss combination
+        loss = (ALPHA * loss_GRF) + (BETA * loss_theta) + (GAMMA * loss_vel)
+        
+        loss.backward() # backprop
+        optimizer.step()  # update parameter
+
+    if (epoch+1) % 10 == 0:
+        print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}")
+
+print("Training complete.")
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 5. Testing
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+model.eval() # stop training
+with torch.no_grad():
+    recon_GRF, recon_theta, recon_vel, latent_total = model(X_GRFtensor, X_theta_tensor, X_vel_tensor) # get latent embedding for clustering
+
+print(f"Latent embedding shape (all modalities): {latent_total.shape} for K Means")
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 6. Post-processing (KMeans clustering)
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+centroids, labels = kmeans.forward(latent_data=latent_total, num_iterations=100)
+labels = labels[:-1] # will have indexing error for plotting if this is not here
+
+print(f"Clustering complete. Cluster label shape (Multimodal): {labels.shape}")
+print(f"Centroid shape: {centroids.shape}")
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 6. Plot Data
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z = Visualizer.extract_features(raw_df=raw_df) 
+
+# plot raw features before range fractionation
+Visualizer.plot_features(time_vec, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z)
+
+# plot range fractionated input for thetas as example of what it looks like
+range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)
+theta_frac = range_frac_inst(X_theta_tensor).detach().cpu().numpy()
+
+Visualizer.plot_rangeFrac_example(theta_frac=theta_frac)
+
+# angles over time of each joint with labels
+Visualizer.plot_labeledTheta(time=time_vec, raw_data_theta=raw_data_theta, SEQ_LENGTH=SEQ_LENGTH, labels=labels)
+
+# GRFs over time in cartesian coords with labels
+Visualizer.plot_labeledGRF(time=time_vec, raw_data_GRF=raw_data_GRF, SEQ_LENGTH=SEQ_LENGTH, labels=labels)

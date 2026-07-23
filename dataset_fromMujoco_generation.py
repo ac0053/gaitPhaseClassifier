@@ -3,24 +3,20 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import mujoco
-from mujoco import viewer
-import time
 import pandas as pd
 import math
 from mujoco import mj_forward
-from mujoco import viewer
 from scipy.optimize import minimize
-from inverse_solvers import inverse_kinematics_interiorPenalty
 from inverse_solvers.inverse_kinematics_interiorPenalty import InverseKinematics
 from inverse_solvers.inverse_dynamics import InverseDynamics
-import leg_height_con
-from mujoco import viewer
+import inverse_solvers.leg_height_con as leg_height_con
+
 
 """
-Script runs both the inverse kinematics and dynamics solvers, then maps values to
-qpos and ctrl (torque) in Mujoco.
+Script runs both the inverse kinematics and dynamics solvers, then saves 
+joint angle data, joint velocities, and ground reaction force data for each leg into csv_trajectory_datasets folder.
 
-Lastly, it generates feature data for the gait phase classifier neural network.
+Lastly, it generates feature data for the gait phase classifier neural network (main.py).
 """
 
 """setup values, load in the model, find end_effectors and joint names"""
