@@ -7,7 +7,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import random
 from models.RangeFractionation import GaussianRangeFractionation
-from models.GRU_Autoencoder import GRUAutoEncoder
+from models.FeedFwdAutoencoder import FeedFwdAutoencoder
 from models.KMeansClustering import KMeans
 from data_graphs.visualizer import Visualizer
 
@@ -57,6 +57,7 @@ def create_seq(data, seq_length):
 
 scaled_GRF, scaled_theta, scaled_vel, raw_data_GRF, raw_data_theta, raw_data_vel = scale_dataframe(raw_df) # raw data to be used for plotting
 
+# sequence data
 SEQ_LENGTH = 6 
 X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
 X_theta = create_seq(scaled_theta, seq_length=SEQ_LENGTH) 
@@ -77,11 +78,11 @@ orig_num_feature_GRF = X_GRFtensor.shape[2]
 orig_num_feature_vel = X_vel_tensor.shape[2] 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 3. Initiazlize Models
+# 2. Initiazlize Models
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
+model = FeedFwdAutoencoder(GRF_num_features=orig_num_feature_GRF, theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
                            GRF_neurons=3200, theta_neurons=1600, vel_neurons=1600,
-                           hidden_dim=64, latent_dim=1) # GRU autoencoder model -> want latent_dim to be 1 to make post-processing simple
+                           hidden_dim=64, latent_dim=1, seq_length=SEQ_LENGTH) #  autoencoder model -> want latent_dim to be 1 to make post-processing simple
 
 kmeans = KMeans(num_clusters=2) # for post-processing
 
@@ -98,7 +99,7 @@ GAMMA = 1.0  #weight for velocity
 dataset = TensorDataset(X_GRFtensor, X_theta_tensor, X_vel_tensor)
 dataloader = DataLoader(dataset, batch_size=64)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 4. Training Loop 
+# 3. Training Loop 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # focus is on optimizing reconstruction loss to gain more representative latent embedding
 epochs = 100
@@ -130,7 +131,7 @@ for epoch in range(epochs):
 
 print("Training complete.")
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 5. Testing
+# 4. Testing
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model.eval() # stop training
 with torch.no_grad():
@@ -138,7 +139,7 @@ with torch.no_grad():
 
 print(f"Latent embedding shape (all modalities): {latent_total.shape} for K Means")
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 6. Post-processing (KMeans clustering)
+# 5. Post-processing (KMeans clustering)
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 centroids, labels = kmeans.forward(latent_data=latent_total, num_iterations=100)
 labels = labels[:-1] # will have indexing error for plotting if this is not here

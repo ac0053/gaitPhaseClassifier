@@ -58,7 +58,7 @@ class GRUAutoEncoder(nn.Module):
         _, hidden = self.encoder_gru(total_fractionated_x)  #hidden shape: (num_layers, batch, hidden_dim)
         hidden = hidden[-1]  #take the last layer's hidden state (shape: (batch, hidden_dim))
         latent_embed = self.encoder_fc(hidden)  #project to latent space
-        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length *add on to this bestie
+        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length
 
         #decoder
         latent_to_hidden = self.decoder_fc(latent_embed_expanded)  #map latent embedding back to hidden dimension
