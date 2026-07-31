@@ -26,12 +26,11 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
         fractionated_vel_input_dim = self.vel_neurons * self.vel_num_features 
         total_fractionated_input_dim = fractionated_GRF_input_dim + fractionated_theta_input_dim + fractionated_vel_input_dim
         self.total_fractionated_input_dim = total_fractionated_input_dim 
-        self.flat_total_input_dim = total_fractionated_input_dim * seq_length # needed to keep latent data 2d for k means
 
         # define encoder and decoder as sequential model with linear layers and RELU activation functions
         # linear compression (encoder)
         self.encoder = nn.Sequential(
-            nn.Linear(self.flat_total_input_dim, hidden_dim),
+            nn.Linear(self.total_fractionated_input_dim, hidden_dim),
             nn.ReLU(), # to introduce non-linearity
             nn.Linear(hidden_dim, latent_dim)
         )
@@ -40,7 +39,8 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, self.flat_total_input_dim) # reconstruct back to flattened dimensions
+            nn.Linear(hidden_dim, hidden_dim), # to match encoder dimensions from gru autoencoder
+            nn.Linear(hidden_dim, self.total_fractionated_input_dim) # reconstruct back to total dimensions
         )
 
         self.GRF_fc = nn.Linear(self.total_fractionated_input_dim, self.GRF_num_features)  # output layer for GRF
@@ -60,14 +60,17 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
         flat_x = total_fractionated_x.view(batch_size, -1) 
 
         # encoder
-        latent_2d = self.encoder(flat_x)
+        latent_embed = self.encoder(total_fractionated_x)
+
+        # latent to probability
+        probs = torch.sigmoid(latent_embed)
 
         # decoder
-        recon_flat = self.decoder(latent_2d)
+        recon_flat = self.decoder(latent_embed)
         recon_total = recon_flat.reshape(batch_size, seq_length, self.total_fractionated_input_dim) # changes back into [batch, seq_length, num_features] shape to compare to orignal data during training
 
         GRF_recon = self.GRF_fc(recon_total)  #reconstructed GRF
         theta_recon = self.theta_fc(recon_total)  #reconstructed theta
         vel_recon = self.vel_fc(recon_total)  #reconstructed vel
 
-        return GRF_recon, theta_recon, vel_recon, latent_2d
+        return GRF_recon, theta_recon, vel_recon, probs

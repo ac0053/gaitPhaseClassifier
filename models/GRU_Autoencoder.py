@@ -58,10 +58,14 @@ class GRUAutoEncoder(nn.Module):
         _, hidden = self.encoder_gru(total_fractionated_x)  #hidden shape: (num_layers, batch, hidden_dim)
         hidden = hidden[-1]  #take the last layer's hidden state (shape: (batch, hidden_dim))
         latent_embed = self.encoder_fc(hidden)  #project to latent space
-        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  #expand latent embedding to match sequence length
+
+        # assign sigmoid to 1D latent data to get probabilities
+        probs = torch.sigmoid(latent_embed)
+
+        latent_embed_expanded = latent_embed.unsqueeze(1).repeat(1, seq_length, 1)  # expand latent embedding to match sequence length for reconstruction
 
         #decoder
-        latent_to_hidden = self.decoder_fc(latent_embed_expanded)  #map latent embedding back to hidden dimension
+        latent_to_hidden = self.decoder_fc(latent_embed_expanded)  # map latent embedding back to hidden dimension
         decoder_output, _ = self.decoder_gru(latent_to_hidden)  #decoder output
 
         #seperate the outputs for GRF, thetaition, and veleleration
@@ -69,4 +73,4 @@ class GRUAutoEncoder(nn.Module):
         theta_recon = self.theta_fc(decoder_output)  #reconstructed thetaition
         vel_recon = self.vel_fc(decoder_output)  #reconstructed veleleration
 
-        return GRF_recon, theta_recon, vel_recon, latent_embed
+        return GRF_recon, theta_recon, vel_recon, probs

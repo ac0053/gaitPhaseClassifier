@@ -83,49 +83,64 @@ class Visualizer:
         figure.suptitle("Range Fractionated Joint Angles")
         plt.show()
 
-    def plot_labeledTheta(time, raw_data_theta, SEQ_LENGTH, labels):
-        aligned_time = time[SEQ_LENGTH:] # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
+    def plot_labeledTheta(raw_df, raw_data_theta, SEQ_LENGTH, swing_indices):
+        aligned_time = raw_df['time'].values[SEQ_LENGTH:]  # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
         figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
         ax1, ax2, ax3= axes.flatten()
 
-        scatter_1 = ax1.scatter(aligned_time, raw_data_theta[SEQ_LENGTH:,0], c=labels)
+        CTi_angle = raw_data_theta[SEQ_LENGTH:,0]
+        TrF_angle = raw_data_theta[SEQ_LENGTH:,1]
+        FTi_angle = raw_data_theta[SEQ_LENGTH:,2]
+
+        plot_1 = ax1.plot(aligned_time, CTi_angle, color='blue')
+        ax1.scatter(aligned_time[swing_indices-1], CTi_angle[swing_indices-1], color='red', label='Predicted Swing States')
         ax1.set_title("CTi angles")
         ax1.set_xlabel('time (s)')
         ax1.set_ylabel('joint angle (rads)')
+        ax1.legend()
 
-        scatter_2 = ax2.scatter(aligned_time, raw_data_theta[SEQ_LENGTH:, 1], c=labels)
+        plot_2 = ax2.plot(aligned_time, TrF_angle)
+        ax2.scatter(aligned_time[swing_indices-1], TrF_angle[swing_indices-1], color='red', label='Predicted Swing States')
         ax2.set_title("TrF angles")
         ax2.set_xlabel('joint angle (s)')
+        ax2.legend()
 
-        scatter_3 = ax3.scatter(aligned_time, raw_data_theta[SEQ_LENGTH:, 2], c=labels)
+        plot_3 = ax3.plot(aligned_time, FTi_angle)
+        ax3.scatter(aligned_time[swing_indices-1], FTi_angle[swing_indices-1], color='red', label='Predicted Swing States')
         ax3.set_title("FTi angles")
         ax3.set_xlabel('time (s)')
-
-        cbar = figure.colorbar(scatter_3, ax=ax3, ticks=[0, 1])
-        cbar.ax.set_yticklabels(['Swing', 'Stance'])
+        ax3.legend()
 
         figure.suptitle('LH leg Gait Classification of a Single Cycle')
         plt.show()
 
-    def plot_labeledGRF(time, raw_data_GRF, SEQ_LENGTH, labels):
-        aligned_time = time[SEQ_LENGTH:] # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
+    def plot_labeledGRF(raw_df, raw_data_GRF, SEQ_LENGTH, swing_indices):
+        aligned_time = raw_df["time"].values[SEQ_LENGTH:] # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
         figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
         ax4, ax5, ax6= axes.flatten()
 
-        scatter_4 = ax4.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 0], c=labels, cmap='plasma')
+        GRF_x = raw_data_GRF[SEQ_LENGTH:,0]
+        GRF_y = raw_data_GRF[SEQ_LENGTH:,1]
+        GRF_z = raw_data_GRF[SEQ_LENGTH:,2]
+
+        plot_4 = ax4.plot(aligned_time, GRF_x)
+        ax4.scatter(aligned_time[swing_indices-1], GRF_x[swing_indices-1], color='red', label='Predicted Swing States')
         ax4.set_title("GRF x-axis")
         ax4.set_xlabel('time (s)')
         ax4.set_ylabel('force (N)')
+        ax4.legend()
 
-        scatter_5 = ax5.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 1], c=labels, cmap='plasma')
+        plot_5 = ax5.plot(aligned_time, GRF_y)
+        ax5.scatter(aligned_time[swing_indices-1], GRF_y[swing_indices-1], color='red', label='Predicted Swing States')
         ax5.set_title("GRF y-axis")
         ax5.set_xlabel('time (s)')
+        ax5.legend()
 
-        scatter_6 = ax6.scatter(aligned_time, raw_data_GRF[SEQ_LENGTH:, 2], c=labels, cmap='plasma')
+        plot_6 = ax6.plot(aligned_time, GRF_z)
+        ax6.scatter(aligned_time[swing_indices-1], GRF_z[swing_indices-1], color='red', label='Predicted Swing States')
         ax6.set_title("GRF z-axis")
         ax6.set_xlabel('time (s)')
-        cbar = figure.colorbar(scatter_6, ax=ax6, ticks=[0, 1])
-        cbar.ax.set_yticklabels(['Swing', 'Stance'])
+        ax6.legend()
         figure.suptitle('LH leg Gait Classification of a Single Cycle')
         plt.show()
 

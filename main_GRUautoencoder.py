@@ -29,8 +29,8 @@ deterministic(seed=42)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 1. Load and Pre-process Features
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv").drop(columns=['time']) # only for training autoencoder, already indexed by timestep
-time_vec = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv")[['time']].values # for plotting data
+raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv")
+main_df = raw_df.drop(columns=['time']) # only for training autoencoder, already indexed by timestep
 n_states = 2 # for clustering stance and swing phases
 
 # preprocess data
@@ -55,7 +55,7 @@ def create_seq(data, seq_length):
         X.append(data[i:i+seq_length]) #past values
     return np.array(X)
 
-scaled_GRF, scaled_theta, scaled_vel, raw_data_GRF, raw_data_theta, raw_data_vel = scale_dataframe(raw_df) # raw data to be used for plotting
+scaled_GRF, scaled_theta, scaled_vel, raw_data_GRF, raw_data_theta, raw_data_vel = scale_dataframe(main_df) # raw data to be used for plotting
 
 SEQ_LENGTH = 6 
 X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
@@ -81,9 +81,7 @@ orig_num_feature_vel = X_vel_tensor.shape[2]
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model = GRUAutoEncoder(GRF_num_features=orig_num_feature_GRF, theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
                            GRF_neurons=3200, theta_neurons=1600, vel_neurons=1600,
-                           hidden_dim=64, latent_dim=1) # GRU autoencoder model -> want latent_dim to be 1 to make post-processing simple
-
-kmeans = KMeans(num_clusters=2) # for post-processing
+                           hidden_dim=64, latent_dim=1) # GRU autoencoder model -> want latent_dim to be 1 to convert to sigmoid
 
 # loss and optimizer definitions
 criterion = nn.MSELoss() # mean squared error loss for data reconstruction
@@ -134,17 +132,9 @@ print("Training complete.")
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model.eval() # stop training
 with torch.no_grad():
-    recon_GRF, recon_theta, recon_vel, latent_total = model(X_GRFtensor, X_theta_tensor, X_vel_tensor) # get latent embedding for clustering
-
-print(f"Latent embedding shape (all modalities): {latent_total.shape} for K Means")
-#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-# 5. Post-processing (KMeans clustering)
-#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-centroids, labels = kmeans.forward(latent_data=latent_total, num_iterations=100)
-labels = labels[:-1] # will have indexing error for plotting if this is not here
-
-print(f"Clustering complete. Cluster label shape (Multimodal): {labels.shape}")
-print(f"Centroid shape: {centroids.shape}")
+    recon_GRF, recon_theta, recon_vel, probs = model(X_GRFtensor, X_theta_tensor, X_vel_tensor) # get probabilities
+    swing_phase_detection = (probs >= 0.5).int()  # convert probabilities to binary labels
+swing_phase_indices = np.where(swing_phase_detection == 0)[0]
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 6. Plot Data
@@ -152,7 +142,7 @@ print(f"Centroid shape: {centroids.shape}")
 LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z = Visualizer.extract_features(raw_df=raw_df) 
 
 # plot raw features before range fractionation
-Visualizer.plot_features(time_vec, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z)
+Visualizer.plot_features(raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z)
 
 # plot range fractionated input for thetas as example of what it looks like
 range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)
@@ -161,7 +151,7 @@ theta_frac = range_frac_inst(X_theta_tensor).detach().cpu().numpy()
 Visualizer.plot_rangeFrac_example(theta_frac=theta_frac)
 
 # angles over time of each joint with labels
-Visualizer.plot_labeledTheta(time=time_vec, raw_data_theta=raw_data_theta, SEQ_LENGTH=SEQ_LENGTH, labels=labels)
+Visualizer.plot_labeledTheta(raw_df=raw_df, raw_data_theta=raw_data_theta, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_phase_indices)
 
 # GRFs over time in cartesian coords with labels
-Visualizer.plot_labeledGRF(time=time_vec, raw_data_GRF=raw_data_GRF, SEQ_LENGTH=SEQ_LENGTH, labels=labels)
+Visualizer.plot_labeledGRF(raw_df=raw_df, raw_data_GRF=raw_data_GRF, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_phase_indices)
