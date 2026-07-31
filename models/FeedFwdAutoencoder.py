@@ -40,12 +40,13 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), # to match encoder dimensions from gru autoencoder
+            nn.ReLU(),
             nn.Linear(hidden_dim, self.total_fractionated_input_dim) # reconstruct back to total dimensions
         )
 
         self.GRF_fc = nn.Linear(self.total_fractionated_input_dim, self.GRF_num_features)  # output layer for GRF
-        self.theta_fc = nn.Linear(self.total_fractionated_input_dim, self.theta_num_features)  # output layer for thetaition
-        self.vel_fc = nn.Linear(self.total_fractionated_input_dim, self.vel_num_features)  # output layer for veleleration
+        self.theta_fc = nn.Linear(self.total_fractionated_input_dim, self.theta_num_features)  # output layer for joint angles
+        self.vel_fc = nn.Linear(self.total_fractionated_input_dim, self.vel_num_features)  # output layer for velocity
 
     def forward(self, GRF_x, theta_x, vel_x):
         GRFfractionated_x = self.GRF_fractionation(GRF_x)  
@@ -55,9 +56,6 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
        #concatenate fractionated inputs
         total_fractionated_x = torch.cat((GRFfractionated_x, thetafractionated_x, velfractionated_x), dim=2)  #concatenate along feature dimension
         batch_size, seq_length, _ = total_fractionated_x.shape
-
-        # flatten fractionated_x to 2d tensor for k means clustering (shape becomes [batch, seq_length*num_features])
-        flat_x = total_fractionated_x.view(batch_size, -1) 
 
         # encoder
         latent_embed = self.encoder(total_fractionated_x)

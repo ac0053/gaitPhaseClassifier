@@ -26,7 +26,7 @@ class GRUAutoEncoder(nn.Module):
         total_fractionated_input_dim = fractionated_GRF_input_dim + fractionated_theta_input_dim + fractionated_vel_input_dim
         self.total_fractionated_input_dim = total_fractionated_input_dim 
 
-        """for encoder function, we will use a GRU to encode the fractionated input data into a latent space of dimension embed_dim"""
+        """for encoder function, we will use a GRU to encode the fractionated input data into a latent space of dimension latent_dim"""
         #shared encoder, expects [batch, seq_length, features]
         self.encoder_gru = nn.GRU(input_size=total_fractionated_input_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
 
@@ -40,8 +40,8 @@ class GRUAutoEncoder(nn.Module):
         self.decoder_gru = nn.GRU(input_size=hidden_dim, hidden_size=hidden_dim, batch_first=True, num_layers=1)
 
         self.GRF_fc = nn.Linear(hidden_dim, self.GRF_num_features)  #output layer for GRF
-        self.theta_fc = nn.Linear(hidden_dim, self.theta_num_features)  #output layer for thetaition
-        self.vel_fc = nn.Linear(hidden_dim, self.vel_num_features)  #output layer for veleleration
+        self.theta_fc = nn.Linear(hidden_dim, self.theta_num_features)  #output layer for joint angles
+        self.vel_fc = nn.Linear(hidden_dim, self.vel_num_features)  #output layer for velocity
 
     def forward(self, GRF_x, theta_x, vel_x):
         #fractionate input data
@@ -68,9 +68,9 @@ class GRUAutoEncoder(nn.Module):
         latent_to_hidden = self.decoder_fc(latent_embed_expanded)  # map latent embedding back to hidden dimension
         decoder_output, _ = self.decoder_gru(latent_to_hidden)  #decoder output
 
-        #seperate the outputs for GRF, thetaition, and veleleration
-        GRF_recon = self.GRF_fc(decoder_output)  #reconstructed GRF
-        theta_recon = self.theta_fc(decoder_output)  #reconstructed thetaition
-        vel_recon = self.vel_fc(decoder_output)  #reconstructed veleleration
+        #seperate the outputs for GRF, joint angles, and velocity
+        GRF_recon = self.GRF_fc(decoder_output)  # reconstructed GRF
+        theta_recon = self.theta_fc(decoder_output)  #r econstructed joint angles
+        vel_recon = self.vel_fc(decoder_output)  # reconstructed velocity
 
         return GRF_recon, theta_recon, vel_recon, probs
