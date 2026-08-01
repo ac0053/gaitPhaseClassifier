@@ -125,7 +125,7 @@ print("Training complete.")
 model.eval() # stop training
 recons = []
 with torch.no_grad():
-    for _ in range(50):  # run multiple times to get different dropout samples
+    for _ in range(30):  # run multiple times to get different dropout samples
         recon_theta, recon_vel, probs = model(X_theta_tensor, X_vel_tensor) # get probabilities and reconstructed inputs
         recons.append(probs) # save probabilities of each run. dropout will cause some variation in the probabilities, which can be used to estimate uncertainty.
 
@@ -137,7 +137,7 @@ prob_variance = torch.stack(recons).var(dim=0)
 uncertainty_score = prob_variance.mean(dim=-1)  # average variance across all samples as a single uncertainty score
 print(f"Uncertainty score (average variance across all samples): {uncertainty_score.max().item():.4f}%") # max uncertainty score across all samples
 
-swing_phase_detection = (avg_probs >= 0.5).int()  # convert probabilities to binary labels
+swing_phase_detection = (avg_probs >= 0.5).int()  # convert probabilities to binary labels. swing phase is 0, stance phase is 1
 swing_phase_indices = np.where(swing_phase_detection == 0)[0]
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
