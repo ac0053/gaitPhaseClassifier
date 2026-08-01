@@ -4,7 +4,7 @@ from models.RangeFractionation import GaussianRangeFractionation
 
 # feed forward autoencoder will still utilize range fractionated inputs
 class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for compression rather than GRU
-    def __init__(self, theta_num_features, vel_num_features, theta_neurons, vel_neurons, hidden_dim, latent_dim, seq_length):
+    def __init__(self, theta_num_features, vel_num_features, theta_neurons, vel_neurons, hidden_dim, latent_dim, seq_length,drop_rate=0.2):
         super(FeedFwdAutoencoder, self).__init__()
         self.theta_num_features = theta_num_features
         self.vel_num_features = vel_num_features
@@ -14,6 +14,7 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.seq_length = seq_length
+        self.drop_rate = drop_rate
         
         # seperate the input data into a range of neurons (populations) with seperate streams for each feature, then concatenate the streams into a single input for the linear layers
         self.theta_fractionation = GaussianRangeFractionation(num_neurons=theta_neurons, min_value=-1.0, max_value=1.0)  
@@ -29,6 +30,7 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
         self.encoder = nn.Sequential(
             nn.Linear(self.total_fractionated_input_dim, hidden_dim),
             nn.ReLU(), # to introduce non-linearity
+            nn.Dropout(drop_rate), # for monte carlo dropout to estimate uncertainty in latent embedding
             nn.Linear(hidden_dim, latent_dim)
         )
 
@@ -38,6 +40,7 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), # to match encoder dimensions from gru autoencoder
             nn.ReLU(),
+            nn.Dropout(drop_rate), # for monte carlo dropout to estimate uncertainty in reconstruction
             nn.Linear(hidden_dim, self.total_fractionated_input_dim) # reconstruct back to total dimensions
         )
 
@@ -54,14 +57,13 @@ class FeedFwdAutoencoder(nn.Module): # autoencoder utilizing linear layers for c
         batch_size, seq_length, _ = total_fractionated_x.shape
 
         # encoder
-        latent_embed = self.encoder(total_fractionated_x)
-
+        latent_embed = nn.functional.dropout(self.encoder(total_fractionated_x), p=self.drop_rate, training=True)  # apply dropout for uncertainty estimation
         # latent to probability
         probs = torch.sigmoid(latent_embed)
 
         # decoder
-        recon_flat = self.decoder(latent_embed)
-        recon_total = recon_flat.reshape(batch_size, seq_length, self.total_fractionated_input_dim) # changes back into [batch, seq_length, num_features] shape to compare to orignal data during training
+        recon = self.decoder(latent_embed)
+        recon_total = nn.functional.dropout(recon, p=self.drop_rate, training=True)  # apply dropout for uncertainty estimation
 
         theta_recon = self.theta_fc(recon_total)  #reconstructed theta
         vel_recon = self.vel_fc(recon_total)  #reconstructed vel
