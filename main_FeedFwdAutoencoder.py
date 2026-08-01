@@ -127,10 +127,9 @@ print("Training complete.")
 model.eval() # stop training
 recons = []
 with torch.no_grad():
-    for batch_theta, batch_vel in dataloader:
-        for _ in range(30):  # run multiple times to get different dropout samples
-            recon_theta, recon_vel, probs = model(batch_theta, batch_vel) # get probabilities and reconstructed inputs
-            recons.append(probs) # save probabilities of each run. dropout will cause some variation in the probabilities, which can be used to estimate uncertainty.
+    for _ in range(30):  # run multiple times to get different dropout samples
+        recon_theta, recon_vel, probs = model(X_theta_tensor, X_vel_tensor) # get probabilities and reconstructed inputs
+        recons.append(probs) # save probabilities of each run. dropout will cause some variation in the probabilities, which can be used to estimate uncertainty.
 
 # take mean of the reconstructed probabilities
 avg_probs = torch.stack(recons).mean(dim=0)
