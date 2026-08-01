@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import random
 from models.RangeFractionation import GaussianRangeFractionation
 from models.FeedFwdAutoencoder import FeedFwdAutoencoder
-from models.KMeansClustering import KMeans
 from data_graphs.visualizer import Visualizer
 
 
@@ -39,14 +38,13 @@ def scale_dataframe(dataframe): # seperates dataframe into different sensor stre
     raw_data = dataframe.values.astype(np.float32)
 
     raw_data_GRF = raw_data[:, :3]  # extract ground reaction force (GRF) data
-    scaled_data_GRF = scaler.fit_transform(raw_data_GRF)
 
     raw_data_theta = raw_data[:, [3,5,7]]  # extract joint angle data
     scaled_data_theta = scaler.fit_transform(raw_data_theta)
 
     raw_data_vel = raw_data[:, [4,6,8]]  #extract joint velocity data
     scaled_data_vel = scaler.fit_transform(raw_data_vel)
-    return scaled_data_GRF, scaled_data_theta, scaled_data_vel, raw_data_GRF, raw_data_theta, raw_data_vel
+    return scaled_data_theta, scaled_data_vel, raw_data_theta, raw_data_vel, raw_data_GRF
 
 # sequence function adaptation for autoencoder input
 def create_seq(data, seq_length):
@@ -55,48 +53,42 @@ def create_seq(data, seq_length):
         X.append(data[i:i+seq_length]) #past values
     return np.array(X)
 
-scaled_GRF, scaled_theta, scaled_vel, raw_data_GRF, raw_data_theta, raw_data_vel = scale_dataframe(main_df) # raw data to be used for plotting
+scaled_theta, scaled_vel, raw_data_theta, raw_data_vel, raw_data_GRF = scale_dataframe(main_df) # raw data to be used for plotting
 
 # sequence data
 SEQ_LENGTH = 6 
-X_GRF = create_seq(scaled_GRF, seq_length=SEQ_LENGTH) 
 X_theta = create_seq(scaled_theta, seq_length=SEQ_LENGTH) 
 X_vel = create_seq(scaled_vel, seq_length=SEQ_LENGTH) 
 
 # convert to tensor
-X_GRFtensor = torch.from_numpy(X_GRF).float() 
 X_theta_tensor = torch.from_numpy(X_theta).float()
 X_vel_tensor = torch.from_numpy(X_vel).float()
 
-print(f"Input shape (GRF): {X_GRFtensor.shape}")
 print(f"Input shape (joint angles): {X_theta_tensor.shape}")
 print(f"Input shape (velocity): {X_vel_tensor.shape}")
 
 # get number of features for each sesnor stream to be used in model initialization
 orig_num_feature_theta = X_theta_tensor.shape[2] 
-orig_num_feature_GRF = X_GRFtensor.shape[2] 
 orig_num_feature_vel = X_vel_tensor.shape[2] 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 2. Initiazlize Models
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-model = FeedFwdAutoencoder(GRF_num_features=orig_num_feature_GRF, theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
-                           GRF_neurons=3200, theta_neurons=1600, vel_neurons=1600,
+model = FeedFwdAutoencoder(theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
+                           theta_neurons=1600, vel_neurons=1600,
                            hidden_dim=64, latent_dim=1, seq_length=SEQ_LENGTH) #  autoencoder model -> want latent_dim to be 1 to make post-processing simple
 
-kmeans = KMeans(num_clusters=2) # for post-processing
 
 # loss and optimizer definitions
 criterion = nn.MSELoss() # mean squared error loss for data reconstruction
-optimizer= torch.optim.Adam(model.parameters(), lr = 0.01)
+optimizer= torch.optim.Adam(model.parameters(), lr = 0.001)
 
-#define loss weights (GRF more important than kinematics)
-ALPHA = 3.0  #weight for GRF
+#define loss weights (velocity more important than joint angles for swing phase detection)
 BETA = 1.0   #weight for joint angles
-GAMMA = 1.0  #weight for velocity
+GAMMA = 2.0  #weight for velocity
 
 # concatenate into a tensor dataset and then dataloader to go through each tensor in chunks of 64
-dataset = TensorDataset(X_GRFtensor, X_theta_tensor, X_vel_tensor)
+dataset = TensorDataset(X_theta_tensor, X_vel_tensor)
 dataloader = DataLoader(dataset, batch_size=64)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 3. Training Loop 
@@ -109,19 +101,18 @@ for epoch in range(epochs):
     
     epoch_loss = 0.0
     
-    for batch_GRF, batch_theta, batch_vel in dataloader:
+    for batch_theta, batch_vel in dataloader:
         optimizer.zero_grad() 
         
         #forward pass on the mini-batch
-        recon_GRF, recon_theta, recon_vel, _ = model(batch_GRF, batch_theta, batch_vel) 
+        recon_theta, recon_vel, _ = model(batch_theta, batch_vel) 
         
         # compute individual losses
-        loss_GRF = criterion(recon_GRF, batch_GRF) 
         loss_theta = criterion(recon_theta, batch_theta) 
         loss_vel = criterion(recon_vel, batch_vel) 
         
         # weighted loss combination
-        loss = (ALPHA * loss_GRF) + (BETA * loss_theta) + (GAMMA * loss_vel)
+        loss = (BETA * loss_theta) + (GAMMA * loss_vel)
         
         loss.backward() # backprop
         optimizer.step()  # update parameter
@@ -135,7 +126,7 @@ print("Training complete.")
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model.eval() # stop training
 with torch.no_grad():
-    recon_GRF, recon_theta, recon_vel, probs = model(X_GRFtensor, X_theta_tensor, X_vel_tensor) # get probabilities
+    recon_theta, recon_vel, probs = model(X_theta_tensor, X_vel_tensor) # get probabilities
     swing_phase_detection = (probs > 0.5).int()  # convert probabilities to binary labels
     swing_phase_indices = np.where(swing_phase_detection == 0)[0]
 
@@ -145,7 +136,7 @@ with torch.no_grad():
 LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z = Visualizer.extract_features(raw_df=raw_df) 
 
 # plot raw features before range fractionation
-Visualizer.plot_features(raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z)
+Visualizer.plot_features(raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel)
 
 # plot range fractionated input for thetas as example of what it looks like
 range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)

@@ -20,9 +20,9 @@ class Visualizer:
         GRF_z = raw_df["LH_GRF_z"]
         return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z
      
-    def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z):
-        figure, axes = plt.subplots(nrows=3, ncols=3, figsize=(10,10), sharex=True)
-        ax1, ax2, ax3, ax4, ax5, ax6, ax_x, ax_y, ax_z = axes.flatten()
+    def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel):
+        figure, axes = plt.subplots(nrows=2, ncols=3, figsize=(10,10), sharex=True)
+        ax1, ax2, ax3, ax4, ax5, ax6 = axes.flatten()
 
         ax1.plot(time, LH_CTr_theta, label="LH_CTr_theta")
         ax1.set_ylabel('Radians (rads)')
@@ -43,19 +43,6 @@ class Visualizer:
 
         ax6.plot(time, LH_FTi_vel, label="LH_FTi_vel")
         ax6.set_title('LH_FTi_vel')
-
-        ax_x.plot(time, GRF_x, label="GRF_x")
-        ax_x.set_xlabel('time (s)')
-        ax_x.set_ylabel('Force (N)')
-        ax_x.set_title('GRF_x')
-
-        ax_y.plot(time, GRF_y, label="GRF_y")
-        ax_y.set_xlabel('time (s)')
-        ax_y.set_title('GRF_y')
-
-        ax_z.plot(time, GRF_z, label="GRF_z")
-        ax_z.set_xlabel('time (s)')
-        ax_z.set_title('GRF_z')
 
         figure.suptitle('Neural Network Features (Inputs)')
         plt.show()
