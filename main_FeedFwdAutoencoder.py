@@ -85,7 +85,7 @@ optimizer= torch.optim.Adam(model.parameters(), lr = 0.001)
 
 #define loss weights (velocity more important than joint angles for swing phase detection)
 BETA = 1.0   #weight for joint angles
-GAMMA = 2.0  #weight for velocity
+GAMMA = 3.0  #weight for velocity
 
 # concatenate into a tensor dataset and then dataloader to go through each tensor in chunks of 64
 dataset = TensorDataset(X_theta_tensor, X_vel_tensor)
