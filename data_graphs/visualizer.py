@@ -15,14 +15,14 @@ class Visualizer:
         LH_TrF_vel = raw_df["LH_TrF_vel"]
         LH_FTi_vel = raw_df["LH_FTi_vel"]
 
+        effector_acc = raw_df["LH_Tip_linear_acc_z"]
         GRF_x = raw_df["LH_GRF_x"]
-        GRF_y = raw_df["LH_GRF_y"]
-        GRF_z = raw_df["LH_GRF_z"]
-        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z
+
+        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_x
      
-    def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel):
-        figure, axes = plt.subplots(nrows=2, ncols=3, figsize=(10,10), sharex=True)
-        ax1, ax2, ax3, ax4, ax5, ax6 = axes.flatten()
+    def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc):
+        figure, axes = plt.subplots(nrows=3, ncols=3, figsize=(10,10), sharex=True)
+        ax1, ax2, ax3, ax4, ax5, ax6, ax7 = axes.flatten()
 
         ax1.plot(time, LH_CTr_theta, label="LH_CTr_theta")
         ax1.set_ylabel('Radians (rads)')
@@ -43,6 +43,10 @@ class Visualizer:
 
         ax6.plot(time, LH_FTi_vel, label="LH_FTi_vel")
         ax6.set_title('LH_FTi_vel')
+
+        ax7.plot(time, effector_acc, label="LH_Tip_linear_acc_z")
+        ax7.set_ylabel('Acceleration (m/s^2)')
+        ax7.set_title('LH_Tip_linear_acc_z')
 
         figure.suptitle('Neural Network Features (Inputs)')
         plt.show()
@@ -70,65 +74,17 @@ class Visualizer:
         figure.suptitle("Range Fractionated Joint Angles")
         plt.show()
 
-    def plot_labeledTheta(raw_df, raw_data_theta, SEQ_LENGTH, swing_indices):
-        aligned_time = raw_df['time'].values[SEQ_LENGTH:]  # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
-        figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
-        ax1, ax2, ax3= axes.flatten()
-
-        CTi_angle = raw_data_theta[SEQ_LENGTH:,0]
-        TrF_angle = raw_data_theta[SEQ_LENGTH:,1]
-        FTi_angle = raw_data_theta[SEQ_LENGTH:,2]
-
-        plot_1 = ax1.plot(aligned_time, CTi_angle, color='blue')
-        ax1.scatter(aligned_time[swing_indices-1], CTi_angle[swing_indices-1], color='red', label='Predicted Swing States')
-        ax1.set_title("CTi angles")
-        ax1.set_xlabel('time (s)')
-        ax1.set_ylabel('joint angle (rads)')
-        ax1.legend()
-
-        plot_2 = ax2.plot(aligned_time, TrF_angle)
-        ax2.scatter(aligned_time[swing_indices-1], TrF_angle[swing_indices-1], color='red', label='Predicted Swing States')
-        ax2.set_title("TrF angles")
-        ax2.set_xlabel('joint angle (s)')
-        ax2.legend()
-
-        plot_3 = ax3.plot(aligned_time, FTi_angle)
-        ax3.scatter(aligned_time[swing_indices-1], FTi_angle[swing_indices-1], color='red', label='Predicted Swing States')
-        ax3.set_title("FTi angles")
-        ax3.set_xlabel('time (s)')
-        ax3.legend()
-
-        figure.suptitle('LH leg Gait Classification of a Single Cycle')
-        plt.show()
-
     def plot_labeledGRF(raw_df, raw_data_GRF, SEQ_LENGTH, swing_indices):
         aligned_time = raw_df["time"].values[SEQ_LENGTH:] # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
-        figure, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,10), sharex=True)
-        ax4, ax5, ax6= axes.flatten()
+        plt.figure(figsize=(10, 5))
+        GRF_z = raw_data_GRF[SEQ_LENGTH:]
 
-        GRF_x = raw_data_GRF[SEQ_LENGTH:,0]
-        GRF_y = raw_data_GRF[SEQ_LENGTH:,1]
-        GRF_z = raw_data_GRF[SEQ_LENGTH:,2]
-
-        plot_4 = ax4.plot(aligned_time, GRF_x)
-        ax4.scatter(aligned_time[swing_indices-1], GRF_x[swing_indices-1], color='red', label='Predicted Swing States')
-        ax4.set_title("GRF x-axis")
-        ax4.set_xlabel('time (s)')
-        ax4.set_ylabel('force (N)')
-        ax4.legend()
-
-        plot_5 = ax5.plot(aligned_time, GRF_y)
-        ax5.scatter(aligned_time[swing_indices-1], GRF_y[swing_indices-1], color='red', label='Predicted Swing States')
-        ax5.set_title("GRF y-axis")
-        ax5.set_xlabel('time (s)')
-        ax5.legend()
-
-        plot_6 = ax6.plot(aligned_time, GRF_z)
-        ax6.scatter(aligned_time[swing_indices-1], GRF_z[swing_indices-1], color='red', label='Predicted Swing States')
-        ax6.set_title("GRF z-axis")
-        ax6.set_xlabel('time (s)')
-        ax6.legend()
-        figure.suptitle('LH leg Gait Classification of a Single Cycle')
+        plt.plot(aligned_time, GRF_z)
+        plt.scatter(aligned_time[swing_indices-1], GRF_z[swing_indices-1], color='red', label='Predicted Swing States')
+        plt.set_title("GRF z-axis")
+        plt.set_xlabel('time (s)')
+        plt.legend()
+        plt.suptitle('LH leg Gait Classification of a Single Cycle')
         plt.show()
 
 

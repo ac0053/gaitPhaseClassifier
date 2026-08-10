@@ -245,7 +245,8 @@ csv_headers = ['time']
 for leg_idx, current_leg_name in enumerate(leg_names):
     matched_joints = [j for j in joint_names if current_leg_name in j]
     matched_effector = [e for e in effectors if current_leg_name in e]
-    
+    csv_headers.append(f"{current_leg_name}_GRF_z")
+
     leg_joint_map[current_leg_name] = matched_joints
     leg_effector_map[current_leg_name] = matched_effector
     
@@ -268,11 +269,15 @@ num_steps = int(duration / dt)
 for step in range(num_steps):
     current_time = step * dt
     row = [current_time]
+    grf_arr = grf[leg_idx, step % samps_per_step, :] 
+
     
     for leg_idx, current_leg_name in enumerate(leg_names):
         joints = leg_joint_map[current_leg_name]
         kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step] # make sure to loop through the kinematics data if the simulation runs longer than one gait cycle
-        
+        grf_arr = grf[leg_idx, step % samps_per_step, :]
+        row.extend([grf_arr[2]])  # Append GRF z-component
+
         for idx, j in enumerate(joints):
             qpos_addr = joint_qpos_addrs[j]
             
@@ -292,6 +297,7 @@ for step in range(num_steps):
         for j in leg_joint_map[current_leg_name]:
             row.append(data.qpos[joint_qpos_addrs[j]])
             row.append(data.qvel[joint_qvel_addrs[j]])
+            
             
         for e in leg_effector_map[current_leg_name]:
             b_id = effector_body_ids[e]
