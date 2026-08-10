@@ -1,3 +1,6 @@
+import csv
+from time import time
+import mujoco.viewer as viewer
 from matplotlib.path import Path as FilePath
 import matplotlib.pyplot as plt
 import os
@@ -227,56 +230,76 @@ sample_idx = np.arange(samps_per_step)
 
 """Map full_kinematics cell and grf to Mujoco model, then gathers joint kinematics and GRF data for one leg 
 and their corresponding joints"""
-
-
 """
-leg_idx legend: 
-0 = LH
-1= RH
-2 = LM
-3 = RM
-4 = LF
-5 = RF
+leg_idx legend:
+0 = LH, 1 = RH, 2 = LM, 3 = RM, 4 = LF, 5 = RF
 """
-big_main_dataset = []
+joint_qpos_addrs = {}
+joint_qvel_addrs = {}
+effector_body_ids = {}
+leg_joint_map = {}
+leg_effector_map = {}
 
-dt = 0.002 #2 ms
+csv_headers = ['time']
 
-for leg_idx in range(num_legs):
-    current_leg_name = leg_names[leg_idx]
-    csv_headers = ["time"]
-
-    csv_headers.extend([f"{current_leg_name}_GRF_x", f"{current_leg_name}_GRF_y", f"{current_leg_name}_GRF_z"])
-
+for leg_idx, current_leg_name in enumerate(leg_names):
     matched_joints = [j for j in joint_names if current_leg_name in j]
-    num_matched_joints = len(matched_joints)
+    matched_effector = [e for e in effectors if current_leg_name in e]
+    
+    leg_joint_map[current_leg_name] = matched_joints
+    leg_effector_map[current_leg_name] = matched_effector
+    
+    # map joint names to qpos and qvel addresses, and effector names to body ids
+    for j in matched_joints:
+        csv_headers.extend([f"{j}_theta", f"{j}_vel"])
+        j_id = model.joint(j).id
+        joint_qpos_addrs[j] = model.jnt_qposadr[j_id]
+        joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
+        
+    for e in matched_effector:
+        csv_headers.extend([ f"{e}_linear_acc_z"])
+        effector_body_ids[e] = model.body(e).id
 
-    for j_name in matched_joints:
-        csv_headers.extend([f"{j_name}_theta", f"{j_name}_vel"])
+row_data = []
+duration = 10.0 # seconds
+dt = 0.01        # 100 Hz
+num_steps = int(duration / dt)
 
-    # Extract data grid for current leg
-    samples_per_traj = full_kinematics[leg_idx, 0, 0].shape[1]
-    leg_grid = full_kinematics[leg_idx, :, :]
+for step in range(num_steps):
+    current_time = step * dt
+    row = [current_time]
+    
+    for leg_idx, current_leg_name in enumerate(leg_names):
+        joints = leg_joint_map[current_leg_name]
+        kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step] # make sure to loop through the kinematics data if the simulation runs longer than one gait cycle
+        
+        for idx, j in enumerate(joints):
+            qpos_addr = joint_qpos_addrs[j]
+            
+            prev_pos = data.qpos[qpos_addr]
+            next_pos = kinematics_slice[idx]
+            
+            data.qpos[qpos_addr] = next_pos
+            data.qvel[joint_qvel_addrs[j]] = (next_pos - prev_pos) / dt
 
-    all_time_steps = []
-    for t_step in range(samples_per_traj):
-        current_time = t_step * dt
-        row_data = [current_time]
+    mujoco.mj_forward(model, data)
 
-        grf_arr = grf[leg_idx, t_step, :]
-        row_data.extend([grf_arr[0], grf_arr[1], grf_arr[2]])
+    # needed to calculate effector accelerations correctly
+    mujoco.mj_rnePostConstraint(model, data)
+    
+    # scrape data uniformly across all components
+    for current_leg_name in leg_names:
+        for j in leg_joint_map[current_leg_name]:
+            row.append(data.qpos[joint_qpos_addrs[j]])
+            row.append(data.qvel[joint_qvel_addrs[j]])
+            
+        for e in leg_effector_map[current_leg_name]:
+            b_id = effector_body_ids[e]
+            lin_accel = data.cacc[b_id] 
+            row.extend([lin_accel[5]]) # extract linear acceleration component along z-axis
+            
+    row_data.append(row)
 
-        for joint_local_idx in range(num_matched_joints):
-            theta_val = leg_grid[0, 0][joint_local_idx, t_step]
-            if t_step > 0:
-                prev_theta_val = leg_grid[0, 0][joint_local_idx, t_step - 1]
-                d_theta = theta_val - prev_theta_val
-                vel_val = d_theta / dt
-            else:
-                vel_val = 0 #starting velocity
-            row_data.extend([theta_val, vel_val])
-
-        all_time_steps.append(row_data)
-
-    df = pd.DataFrame(all_time_steps, columns=csv_headers)
-    df.to_csv(f"csv/gait_phase_{current_leg_name}_trajectories.csv", index=False)
+# export full master trajectory dataset 
+df = pd.DataFrame(row_data, columns=csv_headers)
+df.to_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv", index=False)
