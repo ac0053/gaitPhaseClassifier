@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
+from main_GRUautoencoder import GRF_x
+
 class Visualizer:
     pass
 
@@ -16,9 +18,9 @@ class Visualizer:
         LH_FTi_vel = raw_df["LH_FTi_vel"]
 
         effector_acc = raw_df["LH_Tip_linear_acc_z"]
-        GRF_x = raw_df["LH_GRF_x"]
+        GRF_z = raw_df["LH_GRF_z"]
 
-        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_x
+        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_z
      
     def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc):
         figure, axes = plt.subplots(nrows=3, ncols=3, figsize=(10,10), sharex=True)

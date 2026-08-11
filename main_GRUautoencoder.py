@@ -30,21 +30,15 @@ deterministic(seed=42)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv")
 main_df = raw_df.drop(columns=['time']) # only for training autoencoder, already indexed by timestep
-n_states = 2 # for clustering stance and swing phases
+LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_z = Visualizer.extract_features(raw_df=raw_df) # extract features for plotting
 
-# preprocess data
-def scale_dataframe(dataframe): # seperates dataframe into different sensor streams and z-norms them
-    scaler = StandardScaler()
-    raw_data = dataframe.values.astype(np.float32)
+LH_thetas = np.column_stack((LH_CTr_theta, LH_TrF_theta, LH_FTi_theta))
+LH_vels = np.column_stack((LH_CTr_vel, LH_TrF_vel, LH_FTi_vel))
 
-    raw_data_GRF = raw_data[:, :3]  # extract ground reaction force (GRF) data
-
-    raw_data_theta = raw_data[:, [3,5,7]]  # extract joint angle data
-    scaled_data_theta = scaler.fit_transform(raw_data_theta)
-
-    raw_data_vel = raw_data[:, [4,6,8]]  #extract joint velocity data
-    scaled_data_vel = scaler.fit_transform(raw_data_vel)
-    return scaled_data_theta, scaled_data_vel, raw_data_GRF, raw_data_theta, raw_data_vel
+scaler = StandardScaler()
+scaled_LH_thetas = scaler.fit_transform(LH_thetas)
+scaled_LH_vels = scaler.fit_transform(LH_vels)
+scaled_lin_acc_z = scaler.fit_transform(effector_acc)
 
 # sequence function adaptation for autoencoder input
 def create_seq(data, seq_length):
@@ -53,15 +47,15 @@ def create_seq(data, seq_length):
         X.append(data[i:i+seq_length]) #past values
     return np.array(X)
 
-scaled_theta, scaled_vel, raw_data_GRF, raw_data_theta, raw_data_vel = scale_dataframe(main_df) # raw data to be used for plotting
-
 SEQ_LENGTH = 6 
-X_theta = create_seq(scaled_theta, seq_length=SEQ_LENGTH) 
-X_vel = create_seq(scaled_vel, seq_length=SEQ_LENGTH) 
+X_theta = create_seq(scaled_LH_thetas, seq_length=SEQ_LENGTH) 
+X_vel = create_seq(scaled_LH_vels, seq_length=SEQ_LENGTH) 
+X_eff_acc_z = create_seq(scaled_lin_acc_z)
 
 # convert to tensor
 X_theta_tensor = torch.from_numpy(X_theta).float()
 X_vel_tensor = torch.from_numpy(X_vel).float()
+X_eff_acc_z_tensor = torch.from_numpy(X_eff_acc_z).float()
 
 print(f"Input shape (joint angles): {X_theta_tensor.shape}")
 print(f"Input shape (velocity): {X_vel_tensor.shape}")
@@ -143,10 +137,9 @@ swing_phase_indices = np.where(swing_phase_detection == 0)[0]
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 6. Plot Data
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_x, GRF_y, GRF_z = Visualizer.extract_features(raw_df=raw_df) 
 
 # plot raw features before range fractionation
-Visualizer.plot_features(raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel)
+Visualizer.plot_features(raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc)
 
 # plot range fractionated input for thetas as example of what it looks like
 range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)
@@ -154,8 +147,5 @@ theta_frac = range_frac_inst(X_theta_tensor).detach().cpu().numpy()
 
 Visualizer.plot_rangeFrac_example(theta_frac=theta_frac)
 
-# angles over time of each joint with labels
-#Visualizer.plot_labeledTheta(raw_df=raw_df, raw_data_theta=raw_data_theta, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_phase_indices)
-
 # GRFs over time in cartesian coords with labels
-Visualizer.plot_labeledGRF(raw_df=raw_df, raw_data_GRF=raw_data_GRF, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_phase_indices)
+Visualizer.plot_labeledGRF(raw_df=raw_df, raw_data_GRF=GRF_z, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_phase_indices)

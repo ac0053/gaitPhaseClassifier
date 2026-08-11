@@ -241,16 +241,15 @@ leg_joint_map = {}
 leg_effector_map = {}
 
 csv_headers = ['time']
-
-for leg_idx, current_leg_name in enumerate(leg_names):
+for current_leg_name in leg_names:
     matched_joints = [j for j in joint_names if current_leg_name in j]
     matched_effector = [e for e in effectors if current_leg_name in e]
-    csv_headers.append(f"{current_leg_name}_GRF_z")
-
+    
     leg_joint_map[current_leg_name] = matched_joints
     leg_effector_map[current_leg_name] = matched_effector
     
-    # map joint names to qpos and qvel addresses, and effector names to body ids
+    # append headers sequentially for this leg
+    csv_headers.append(f"{current_leg_name}_GRF_z")
     for j in matched_joints:
         csv_headers.extend([f"{j}_theta", f"{j}_vel"])
         j_id = model.joint(j).id
@@ -258,54 +257,48 @@ for leg_idx, current_leg_name in enumerate(leg_names):
         joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
         
     for e in matched_effector:
-        csv_headers.extend([ f"{e}_linear_acc_z"])
+        csv_headers.extend([f"{e}_linear_acc_z"])
         effector_body_ids[e] = model.body(e).id
 
 row_data = []
-duration = 10.0 # seconds
+duration = 10.0  # seconds
 dt = 0.01        # 100 Hz
 num_steps = int(duration / dt)
 
 for step in range(num_steps):
     current_time = step * dt
     row = [current_time]
-    grf_arr = grf[leg_idx, step % samps_per_step, :] 
-
     
     for leg_idx, current_leg_name in enumerate(leg_names):
         joints = leg_joint_map[current_leg_name]
-        kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step] # make sure to loop through the kinematics data if the simulation runs longer than one gait cycle
-        grf_arr = grf[leg_idx, step % samps_per_step, :]
-        row.extend([grf_arr[2]])  # Append GRF z-component
-
+        kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step]
+        
         for idx, j in enumerate(joints):
             qpos_addr = joint_qpos_addrs[j]
-            
             prev_pos = data.qpos[qpos_addr]
             next_pos = kinematics_slice[idx]
-            
             data.qpos[qpos_addr] = next_pos
             data.qvel[joint_qvel_addrs[j]] = (next_pos - prev_pos) / dt
 
     mujoco.mj_forward(model, data)
-
-    # needed to calculate effector accelerations correctly
-    mujoco.mj_rnePostConstraint(model, data)
+    mujoco.mj_rnePostConstraint(model, data) 
     
-    # scrape data uniformly across all components
-    for current_leg_name in leg_names:
+    for leg_idx, current_leg_name in enumerate(leg_names):
+  
+        grf_arr = grf[leg_idx, step % samps_per_step, :]
+        row.append(grf_arr[2])
+        
         for j in leg_joint_map[current_leg_name]:
             row.append(data.qpos[joint_qpos_addrs[j]])
             row.append(data.qvel[joint_qvel_addrs[j]])
             
-            
         for e in leg_effector_map[current_leg_name]:
             b_id = effector_body_ids[e]
-            lin_accel = data.cacc[b_id] 
-            row.extend([lin_accel[5]]) # extract linear acceleration component along z-axis
+            lin_accel = data.cacc[b_id]
+            row.append(lin_accel[5]) # spatial acceleration z-component
             
     row_data.append(row)
 
-# export full master trajectory dataset 
+# export full master trajectory dataset
 df = pd.DataFrame(row_data, columns=csv_headers)
 df.to_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv", index=False)
