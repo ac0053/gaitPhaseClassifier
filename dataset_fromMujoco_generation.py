@@ -1,5 +1,5 @@
 import csv
-from time import time
+from time import sleep
 import mujoco.viewer as viewer
 from matplotlib.path import Path as FilePath
 import matplotlib.pyplot as plt
@@ -263,42 +263,46 @@ for current_leg_name in leg_names:
 row_data = []
 duration = 10.0  # seconds
 dt = 0.01        # 100 Hz
+step = 0 # initialization for while loop
 num_steps = int(duration / dt)
 
-for step in range(num_steps):
-    current_time = step * dt
-    row = [current_time]
+with viewer.launch_passive(model, data) as v:
+        print("press esc to exit view")
+        while v.is_running() and step <= num_steps:
+            current_time = step * dt
+            row = [current_time]
     
-    for leg_idx, current_leg_name in enumerate(leg_names):
-        joints = leg_joint_map[current_leg_name]
-        kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step]
+            for leg_idx, current_leg_name in enumerate(leg_names):
+                joints = leg_joint_map[current_leg_name]
+                kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step]
         
-        for idx, j in enumerate(joints):
-            qpos_addr = joint_qpos_addrs[j]
-            prev_pos = data.qpos[qpos_addr]
-            next_pos = kinematics_slice[idx]
-            data.qpos[qpos_addr] = next_pos
-            data.qvel[joint_qvel_addrs[j]] = (next_pos - prev_pos) / dt
+                for idx, j in enumerate(joints):
+                    qpos_addr = joint_qpos_addrs[j]
+                    prev_pos = data.qpos[qpos_addr]
+                    next_pos = kinematics_slice[idx]
+                    data.qpos[qpos_addr] = next_pos
+                    data.qvel[joint_qvel_addrs[j]] = (next_pos - prev_pos) / dt
 
-    mujoco.mj_forward(model, data)
-    mujoco.mj_rnePostConstraint(model, data) 
+            mujoco.mj_forward(model, data)
+            mujoco.mj_rnePostConstraint(model, data) 
     
-    for leg_idx, current_leg_name in enumerate(leg_names):
-  
-        grf_arr = grf[leg_idx, step % samps_per_step, :]
-        row.append(grf_arr[2])
+            for leg_idx, current_leg_name in enumerate(leg_names):
+                grf_arr = grf[leg_idx, step % samps_per_step, :]
+                row.append(grf_arr[2])
         
-        for j in leg_joint_map[current_leg_name]:
-            row.append(data.qpos[joint_qpos_addrs[j]])
-            row.append(data.qvel[joint_qvel_addrs[j]])
+                for j in leg_joint_map[current_leg_name]:
+                    row.append(data.qpos[joint_qpos_addrs[j]])
+                    row.append(data.qvel[joint_qvel_addrs[j]])
             
-        for e in leg_effector_map[current_leg_name]:
-            b_id = effector_body_ids[e]
-            lin_accel = data.cacc[b_id]
-            row.append(lin_accel[5]) # spatial acceleration z-component
-            
-    row_data.append(row)
-
+                for e in leg_effector_map[current_leg_name]:
+                    b_id = effector_body_ids[e]
+                    lin_accel = data.cacc[b_id]
+                    row.append(lin_accel[5]) # spatial acceleration z-component
+            v.sync()
+            sleep(0.1)
+            row_data.append(row)
+            step += 1
 # export full master trajectory dataset
 df = pd.DataFrame(row_data, columns=csv_headers)
 df.to_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv", index=False)
+print("dataset saved!")
