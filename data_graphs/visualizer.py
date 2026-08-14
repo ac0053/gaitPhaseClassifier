@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from main_GRUautoencoder import GRF_x
 
 class Visualizer:
     pass
@@ -23,7 +22,7 @@ class Visualizer:
         return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_z
      
     def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc):
-        figure, axes = plt.subplots(nrows=3, ncols=3, figsize=(10,10), sharex=True)
+        figure, axes = plt.subplots(nrows=1, ncols=7, figsize=(20,20), sharex=True)
         ax1, ax2, ax3, ax4, ax5, ax6, ax7 = axes.flatten()
 
         ax1.plot(time, LH_CTr_theta, label="LH_CTr_theta")
@@ -31,9 +30,11 @@ class Visualizer:
         ax1.set_title('LH_CTr_theta')
 
         ax2.plot(time, LH_TrF_theta, label="LH_TrF_theta")
+        ax1.set_ylabel('Radians (rads)')
         ax2.set_title('LH_TrF_theta')
 
         ax3.plot(time, LH_FTi_theta, label="LH_FTi_theta")
+        ax1.set_ylabel('Radians (rads)')
         ax3.set_title('LH_FTi_theta')
 
         ax4.plot(time, LH_CTr_vel, label="LH_CTr_vel")
@@ -41,9 +42,11 @@ class Visualizer:
         ax4.set_title('LH_CTr_vel')
 
         ax5.plot(time, LH_TrF_vel, label="LH_TrF_vel")
+        ax4.set_ylabel('Radians per sec (rads/s)')
         ax5.set_title('LH_TrF_vel')
 
         ax6.plot(time, LH_FTi_vel, label="LH_FTi_vel")
+        ax4.set_ylabel('Radians per sec (rads/s)')
         ax6.set_title('LH_FTi_vel')
 
         ax7.plot(time, effector_acc, label="LH_Tip_linear_acc_z")
@@ -82,9 +85,9 @@ class Visualizer:
         GRF_z = raw_data_GRF[SEQ_LENGTH:]
 
         plt.plot(aligned_time, GRF_z)
-        plt.scatter(aligned_time[swing_indices-1], GRF_z[swing_indices-1], color='red', label='Predicted Swing States')
-        plt.set_title("GRF z-axis")
-        plt.set_xlabel('time (s)')
+        plt.scatter(aligned_time[swing_indices], GRF_z[swing_indices], color='red', label='Predicted Swing States')
+        plt.title("GRF z-axis")
+        plt.xlabel('time (s)')
         plt.legend()
         plt.suptitle('LH leg Gait Classification of a Single Cycle')
         plt.show()

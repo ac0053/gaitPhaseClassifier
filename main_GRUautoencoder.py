@@ -28,17 +28,18 @@ deterministic(seed=42)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 1. Load and Pre-process Features
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_LH_trajectories.csv")
+raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv")
 main_df = raw_df.drop(columns=['time']) # only for training autoencoder, already indexed by timestep
 LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_z = Visualizer.extract_features(raw_df=raw_df) # extract features for plotting
 
 LH_thetas = np.column_stack((LH_CTr_theta, LH_TrF_theta, LH_FTi_theta))
 LH_vels = np.column_stack((LH_CTr_vel, LH_TrF_vel, LH_FTi_vel))
+LH_eff_acc_z = effector_acc.to_numpy().reshape(-1, 1)
 
 scaler = StandardScaler()
 scaled_LH_thetas = scaler.fit_transform(LH_thetas)
 scaled_LH_vels = scaler.fit_transform(LH_vels)
-scaled_lin_acc_z = scaler.fit_transform(effector_acc)
+scaled_lin_acc_z = scaler.fit_transform(LH_eff_acc_z)
 
 # sequence function adaptation for autoencoder input
 def create_seq(data, seq_length):
@@ -50,7 +51,7 @@ def create_seq(data, seq_length):
 SEQ_LENGTH = 6 
 X_theta = create_seq(scaled_LH_thetas, seq_length=SEQ_LENGTH) 
 X_vel = create_seq(scaled_LH_vels, seq_length=SEQ_LENGTH) 
-X_eff_acc_z = create_seq(scaled_lin_acc_z)
+X_eff_acc_z = create_seq(scaled_lin_acc_z, seq_length=SEQ_LENGTH)
 
 # convert to tensor
 X_theta_tensor = torch.from_numpy(X_theta).float()
@@ -63,12 +64,13 @@ print(f"Input shape (velocity): {X_vel_tensor.shape}")
 # get number of features for each sesnor stream to be used in model initialization
 orig_num_feature_theta = X_theta_tensor.shape[2] 
 orig_num_feature_vel = X_vel_tensor.shape[2] 
+orig_num_feature_eff_acc_z = X_eff_acc_z_tensor.shape[2]
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 2. Initiazlize Models
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-model = GRUAutoEncoder(theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
-                        theta_neurons=1600, vel_neurons=1600,
+model = GRUAutoEncoder(theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel, lin_acc_num_features=orig_num_feature_eff_acc_z,
+                        theta_neurons=1600, vel_neurons=3200, lin_acc_neurons=1600,
                            hidden_dim=64, latent_dim=1) # GRU autoencoder model -> want latent_dim to be 1 to convert to sigmoid
 
 # loss and optimizer definitions
@@ -78,9 +80,10 @@ optimizer= torch.optim.Adam(model.parameters(), lr = 0.001)
 #define loss weights (velocity more important than joint angles for swing phase detection)
 BETA = 1.0   #weight for joint angles
 GAMMA = 3.0  #weight for velocity
+SIGMA = 1.0 #weight for vertical linear acceleration of effector
 
 # concatenate into a tensor dataset and then dataloader to go through each tensor in chunks of 64
-dataset = TensorDataset(X_theta_tensor, X_vel_tensor)
+dataset = TensorDataset(X_theta_tensor, X_vel_tensor, X_eff_acc_z_tensor)
 dataloader = DataLoader(dataset, batch_size=64)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 3. Training Loop 
@@ -93,18 +96,19 @@ for epoch in range(epochs):
     
     epoch_loss = 0.0
     
-    for batch_theta, batch_vel in dataloader:
+    for batch_theta, batch_vel, batch_eff_acc_z in dataloader:
         optimizer.zero_grad() 
         
         #forward pass on the mini-batch
-        recon_theta, recon_vel, _ = model(batch_theta, batch_vel) 
+        recon_theta, recon_vel, recon_eff_acc_z, _ = model(batch_theta, batch_vel, batch_eff_acc_z) 
         
         # compute individual losses
         loss_theta = criterion(recon_theta, batch_theta) 
         loss_vel = criterion(recon_vel, batch_vel) 
+        loss_eff_acc_z = criterion(recon_eff_acc_z, batch_eff_acc_z)
         
         # weighted loss combination
-        loss = (BETA * loss_theta) + (GAMMA * loss_vel)
+        loss = (BETA * loss_theta) + (GAMMA * loss_vel) + (SIGMA * loss_eff_acc_z)
         
         loss.backward() # backprop
         optimizer.step()  # update parameter
@@ -120,7 +124,7 @@ model.eval() # stop training
 recons = []
 with torch.no_grad():
     for _ in range(30):  # run multiple times to get different dropout samples
-        recon_theta, recon_vel, probs = model(X_theta_tensor, X_vel_tensor) # get probabilities and reconstructed inputs
+        recon_theta, recon_vel, recon_eff_acc_z, probs = model(X_theta_tensor, X_vel_tensor, X_eff_acc_z_tensor) # get probabilities and reconstructed inputs
         recons.append(probs) # save probabilities of each run. dropout will cause some variation in the probabilities, which can be used to estimate uncertainty.
 
 # take mean of the reconstructed probabilities
@@ -129,10 +133,10 @@ avg_probs = torch.stack(recons).mean(dim=0)
 # calculate variance of the reconstructed probabilities for uncertainty estimation
 prob_variance = torch.stack(recons).var(dim=0)
 uncertainty_score = prob_variance.mean(dim=-1)  # average variance across all samples as a single uncertainty score
-print(f"Uncertainty score (average variance across all samples): {uncertainty_score.max().item():.4f}%") # max uncertainty score across all samples
+print(f"Uncertainty score (average variance across all samples): {uncertainty_score.max().item():.4f}") # max uncertainty score across all samples
 
-swing_phase_detection = (avg_probs >= 0.5).int()  # convert probabilities to binary labels. swing phase is 0, stance phase is 1
-swing_phase_indices = np.where(swing_phase_detection == 0)[0]
+swing_phase_detection = (avg_probs < 0.5).int()  # convert probabilities to binary labels. swing phase is 0, stance phase is 1
+swing_phase_indices = np.where(swing_phase_detection == 0)[0] 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 6. Plot Data
