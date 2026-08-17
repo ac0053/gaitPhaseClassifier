@@ -16,14 +16,13 @@ class Visualizer:
         LH_TrF_vel = raw_df["LH_TrF_vel"]
         LH_FTi_vel = raw_df["LH_FTi_vel"]
 
-        effector_acc = raw_df["LH_Tip_linear_acc_z"]
         GRF_z = raw_df["LH_GRF_z"]
 
-        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc, GRF_z
+        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_z
      
-    def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, effector_acc):
-        figure, axes = plt.subplots(nrows=1, ncols=7, figsize=(20,20), sharex=True)
-        ax1, ax2, ax3, ax4, ax5, ax6, ax7 = axes.flatten()
+    def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel):
+        figure, axes = plt.subplots(nrows=2, ncols=3, figsize=(20,20), sharex=True)
+        ax1, ax2, ax3, ax4, ax5, ax6, = axes.flatten()
 
         ax1.plot(time, LH_CTr_theta, label="LH_CTr_theta")
         ax1.set_ylabel('Radians (rads)')
@@ -48,10 +47,6 @@ class Visualizer:
         ax6.plot(time, LH_FTi_vel, label="LH_FTi_vel")
         ax4.set_ylabel('Radians per sec (rads/s)')
         ax6.set_title('LH_FTi_vel')
-
-        ax7.plot(time, effector_acc, label="LH_Tip_linear_acc_z")
-        ax7.set_ylabel('Acceleration (m/s^2)')
-        ax7.set_title('LH_Tip_linear_acc_z')
 
         figure.suptitle('Neural Network Features (Inputs)')
         plt.show()
@@ -81,11 +76,12 @@ class Visualizer:
 
     def plot_labeledGRF(raw_df, raw_data_GRF, SEQ_LENGTH, swing_indices):
         aligned_time = raw_df["time"].values[SEQ_LENGTH:] # takes off first SEQ_LENGTH number of samples from start to match amout of time steps after sequencing features
+        raw_data_GRF = raw_data_GRF.to_numpy() # convert to numpy for plotting
         plt.figure(figsize=(10, 5))
-        GRF_z = raw_data_GRF[SEQ_LENGTH:]
 
-        plt.plot(aligned_time, GRF_z)
-        plt.scatter(aligned_time[swing_indices], GRF_z[swing_indices], color='red', label='Predicted Swing States')
+        plt.plot(aligned_time, raw_data_GRF)
+        plt.scatter(aligned_time[swing_indices], raw_data_GRF[swing_indices], color='red', label='Predicted Swing States')
+        
         plt.title("GRF z-axis")
         plt.xlabel('time (s)')
         plt.legend()
