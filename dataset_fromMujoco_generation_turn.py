@@ -28,9 +28,6 @@ swing_duration=0.5 #s
 stance_duty=0.6 #s
 step_height=[.07,.07,.06,.06,.07,.07]
 floor_level= 0.125
-
-
-
 spring=0
 max_joint_vel=1.5
 max_body_trans=0.085
@@ -260,7 +257,6 @@ for current_leg_name in leg_names:
         joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
         
     for e in matched_effector:
-        csv_headers.extend([f"{e}_linear_acc_z"])
         effector_body_ids[e] = model.body(e).id
 
 row_data = []
@@ -277,8 +273,8 @@ with viewer.launch_passive(model, data) as v:
     
             for leg_idx, current_leg_name in enumerate(leg_names):
                 joints = leg_joint_map[current_leg_name]
-                kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step]
-        
+                kinematics_slice = full_kinematics[leg_idx, 0, 4][:, step % samps_per_step]
+
                 for idx, j in enumerate(joints):
                     qpos_addr = joint_qpos_addrs[j]
                     prev_pos = data.qpos[qpos_addr]
@@ -297,15 +293,11 @@ with viewer.launch_passive(model, data) as v:
                     row.append(data.qpos[joint_qpos_addrs[j]])
                     row.append(data.qvel[joint_qvel_addrs[j]])
             
-                for e in leg_effector_map[current_leg_name]:
-                    b_id = effector_body_ids[e]
-                    lin_accel = data.cacc[b_id]
-                    row.append(lin_accel[5]) # spatial acceleration z-component
             v.sync()
             sleep(0.1)
             row_data.append(row)
             step += 1
 # export full master trajectory dataset
 df = pd.DataFrame(row_data, columns=csv_headers)
-df.to_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv", index=False)
+df.to_csv("csv_trajectory_datasets/turning_gait_phase_master_trajectories.csv", index=False)
 print("dataset saved!")

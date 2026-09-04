@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import sns_toolbox as sns
 
 class GaussianRangeFractionation(nn.Module): # to be used before autoencoder to fractionate the input data into a range of neurons (acts as encoder)
     def __init__(self, num_neurons, min_value, max_value, sigma=0.1):

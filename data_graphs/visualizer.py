@@ -16,9 +16,7 @@ class Visualizer:
         LH_TrF_vel = raw_df["LH_TrF_vel"]
         LH_FTi_vel = raw_df["LH_FTi_vel"]
 
-        GRF_z = raw_df["LH_GRF_z"]
-
-        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_z
+        return LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel
      
     def plot_features(time, LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel):
         figure, axes = plt.subplots(nrows=2, ncols=3, figsize=(20,20), sharex=True)
@@ -29,11 +27,11 @@ class Visualizer:
         ax1.set_title('LH_CTr_theta')
 
         ax2.plot(time, LH_TrF_theta, label="LH_TrF_theta")
-        ax1.set_ylabel('Radians (rads)')
+        ax2.set_ylabel('Radians (rads)')
         ax2.set_title('LH_TrF_theta')
 
         ax3.plot(time, LH_FTi_theta, label="LH_FTi_theta")
-        ax1.set_ylabel('Radians (rads)')
+        ax3.set_ylabel('Radians (rads)')
         ax3.set_title('LH_FTi_theta')
 
         ax4.plot(time, LH_CTr_vel, label="LH_CTr_vel")
@@ -41,11 +39,11 @@ class Visualizer:
         ax4.set_title('LH_CTr_vel')
 
         ax5.plot(time, LH_TrF_vel, label="LH_TrF_vel")
-        ax4.set_ylabel('Radians per sec (rads/s)')
+        ax5.set_ylabel('Radians per sec (rads/s)')
         ax5.set_title('LH_TrF_vel')
 
         ax6.plot(time, LH_FTi_vel, label="LH_FTi_vel")
-        ax4.set_ylabel('Radians per sec (rads/s)')
+        ax6.set_ylabel('Radians per sec (rads/s)')
         ax6.set_title('LH_FTi_vel')
 
         figure.suptitle('Neural Network Features (Inputs)')

@@ -20,6 +20,7 @@ class InverseKinematics:
         self.max_body_trans = max_body_trans
         self.max_body_rot = max_body_rot
         self.swing_duration = swing_duration
+        self.stance_duration = self.swing_duration / (1 - self.stance_duty) * self.stance_duty
         self.step_height = step_height
         self.num_rot = num_rot
         self.num_trans = num_trans
@@ -117,16 +118,15 @@ class InverseKinematics:
              [0, 1, 2 * tf, 3 * tf ** 2, 4 * tf ** 3, 5 * tf ** 4],
              [0, 0, 2, 6 * tf, 12 * tf ** 2, 20 * tf ** 3]])
 
-        stance_duration = self.swing_duration / (1 - self.stance_duty) * self.stance_duty
-        swing_x_vel = (x_min - x_max) / stance_duration
+        swing_x_vel = (x_min - x_max) / self.stance_duration
         swing_x_acc = 0
-        single_time_step = (self.swing_duration / (1 - self.stance_duty) * self.stance_duty) / step_num
+        single_time_step = self.stance_duration / step_num
         swing_z_vel1 = (stance_vec[2, -1] - stance_vec[2, -2]) / single_time_step
         swing_z_vel2 = (stance_vec[2, 1] - stance_vec[2, 0]) / single_time_step
 
         b5_12z = np.array([[stance_vec[2, -1], swing_z_vel1, 0, self.step_height[leg], 0, 0]]).T
-        b5_23z = np.array([self.step_height[leg], 0, 0, stance_vec[2, 0], swing_z_vel2, 0]).T
-        b5_13x = np.array([x_max, -swing_x_vel, swing_x_acc, x_min, -swing_x_vel, swing_x_acc]).T
+        b5_23z = np.array([[self.step_height[leg], 0, 0, stance_vec[2, 0], swing_z_vel2, 0]]).T
+        b5_13x = np.array([[x_max, -swing_x_vel, swing_x_acc, x_min, -swing_x_vel, swing_x_acc]]).T
 
         t = np.linspace(t0, tf, step_num)
         t1 = t[range(0, round((step_num - 1) / 2))]
@@ -141,29 +141,26 @@ class InverseKinematics:
         z5_sw = np.append(z5_1, z5_2)
         x5_sw = q5(t, p5_x)
 
-        row = stance_vec[0, :]
-        diffs = np.diff(row)
-        increasing = np.all(diffs >= 0)
-        decreasing = np.all(diffs <= 0)
-        invalid = False
-        if not increasing and not decreasing:
-            print(stance_vec[0, :])
-            self.count += 1
-            invalid = True
+        diffs = np.diff(stance_vec[0, :])
+        # If the stance_vec[0, :] is pretty much uniform, it is "invalid" because we can't use it for interpolation.
+        # In this case, "uniform" means varies by less than a millimeter
+        invalid = all(abs(diffs) < 1e-6)
 
         # interpolate z coordinates in swing based stance
         if invalid:
-            y5_sw = np.zeros((1, len(x5_sw)))
+            y5_sw = np.zeros_like(x5_sw)
+            print('method 1')
         elif np.linalg.norm(x5_sw) != 0:
             # Pchip only allows for strictly increasing monotonic series, need to check if strictly decreasing
-            check = True
-            for b in range(len(stance_vec[0, :]) - 1):
-                if stance_vec[0, b] > stance_vec[0, b + 1]:
-                    check = False
-
-            if check:
+            # This condition checks if stance_vec[0, :] increases monotonically.
+            if all(np.diff(stance_vec[0, :]) > 0):
                 interp = interpolate.PchipInterpolator(stance_vec[0, :], stance_vec[1, :], extrapolate=True)
                 y5_sw = interp(x5_sw)
+                print('method 2')
+            elif all(np.diff(stance_vec[0, :]) < 0):
+                interp = interpolate.PchipInterpolator(np.flip(stance_vec[0, :]), np.flip(stance_vec[1, :]), extrapolate=True)
+                y5_sw = interp(x5_sw)
+                print('method 3')
             else:
                 stance_x_reverse = []
                 stance_z_reverse = []
@@ -175,12 +172,13 @@ class InverseKinematics:
                 y5_sw = []
                 for b in range(y5_sw_reverse.shape[0] - 1, -1, -1):
                     y5_sw.append(y5_sw_reverse[b])
+                print('method 4')
         else:
-            y5_sw = np.zeros((1, len(x5_sw)))
-        y5_sw = np.array(y5_sw)
+            y5_sw = np.zeros_like(x5_sw)
+            print('method 5')
         foot_path_sw_new_5th = np.zeros((3, self.num_samps_per_step))
         foot_path_sw_new_5th[0, :] = x5_sw
-        foot_path_sw_new_5th[1, :] = y5_sw[::-1]
+        foot_path_sw_new_5th[1, :] = y5_sw
         foot_path_sw_new_5th[2, :] = z5_sw
 
         foot_path_st_f_new = stance_vec[:, int(np.ceil(stance_vec.shape[1] / 2 - 1)):]
@@ -198,10 +196,11 @@ class InverseKinematics:
         if to_plot_raw:
             plt.figure()
             for n in range(np.shape(foot_path)[0]):
-                plt.plot(foot_path[n, :], label="axis " + str(n))
+                plt.plot(np.tile(foot_path[n, :], (3, )), label="axis " + str(n))
             plt.legend()
             plt.title("perfect leg")
             plt.ylabel("foot path (m)")
+            plt.grid()
             plt.draw()
             plt.show()
 
@@ -224,8 +223,7 @@ class InverseKinematics:
 
         r_foot_wrt_base[:] = p_foot - self.p_base
 
-        stance_duration = self.swing_duration / (1 - self.stance_duty) * self.stance_duty
-        step_frequency = 1 / (stance_duration + self.swing_duration)
+        step_frequency = 1 / (self.stance_duration + self.swing_duration)
 
         # save resting posture for easier use to solve for aep and pep configurations
         resting = self.data.qpos[joint_id]
@@ -242,6 +240,7 @@ class InverseKinematics:
         start_point = end_effector - self.p_base
 
         num_steps = foot_path.shape[1]
+        print("num_steps = " + str(num_steps))
         kinematics = np.empty((len(joint_id), num_steps))
         r_foot = np.empty((3, num_steps))
         r_foot[:, 0] = start_point
@@ -289,6 +288,38 @@ class InverseKinematics:
             # now the full step, using the half-step Jacobian and the full step distance.
             #
             kinematics[:, ind] = kinematics[:, ind - 1] + np.linalg.pinv(jac_active_half) @ dx
+
+            """
+            # Interior Penalty Search
+            current_q = self.data.qpos[joint_id]
+            gamma = 1e-2
+            tol = 1e-12
+            all_within_bounds = False
+
+            """ """
+             NICK: I understand decreasing the ik_config_change to keep joints within their limits, but if the process
+             assumes equal changes in time between configs, then reducing ik_config_change will cause the motion to slow
+             in an unexpected/unaccounted for way.
+                """
+            """
+            while gamma >= tol:
+                penalty = -1 / (np.maximum(current_q - lower_limit, tol)) + 1 / (
+                    np.maximum(upper_limit - current_q, tol))
+                t_func_grad = np.float64(ik_config_change - (gamma * penalty))
+                next_config = current_q + t_func_grad
+
+                # if feasible, break. otherwise minimize t_func by gamma->0
+                if np.all(next_config >= lower_limit) and np.all(next_config <= upper_limit):
+                    kinematics[:, ind] = next_config
+                    self.data.qpos[joint_id] = next_config
+                    all_within_bounds = True
+                    break
+                gamma *= 0.5
+
+            if foot_path[2, ind] == 0:
+                if self.data.body(body_id).xpos[2] > 0.20:
+                    self.wrong += 1
+            """
             ind += 1
 
         return kinematics, step_frequency
@@ -358,16 +389,12 @@ class InverseKinematics:
             foot_path_resample = np.vstack(
                 [np.interp(t_new, t_old, foot_path_resample[v, :]) for v in range(3)]
             )
-        # position of the body moving backward
-        traj_dir = foot_path_resample[0][1] - foot_path_resample[0][0]
-        if traj_dir < 0:
-            aepid = np.argmax(foot_path_resample[0, :])
-            pepid = np.argmin(foot_path_resample[0, :])
-        else:
-            aepid = np.argmin(foot_path_resample[0, :])
-            pepid = np.argmax(foot_path_resample[0, :])
-        # redefine the num_samps to match the new number of samples
 
+        # compute leg configuration in pep and aep
+        pep = st1_kinematics[:, -1]
+        aep = st2_kinematics[:, 0]
+
+        # redefine the num_samps to match the new number of samples
         num_samps = kinematics_resample.shape[1]
         period = 1 / step_frequency
         # make a time vector to produce desired frequency
@@ -404,6 +431,6 @@ class InverseKinematics:
             kinematics_resample[k, end - p1:end] = new_kin[:int(num_pts / 2) - 1]
             kinematics_resample[k, :p2] = new_kin[int(num_pts / 2):]
 
-        return kinematics_resample, st_kinematics, sw_kinematics, aepid, pepid, foot_path_resample
+        return kinematics_resample, st_kinematics, sw_kinematics, aep, pep, foot_path_resample
 
 

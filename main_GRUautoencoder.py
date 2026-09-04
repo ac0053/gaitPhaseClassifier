@@ -28,24 +28,42 @@ deterministic(seed=42)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 1. Load and Pre-process Features
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-raw_df = pd.read_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv")
-main_df = raw_df.drop(columns=['time']) # only for training autoencoder, already indexed by timestep
-LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel, GRF_z = Visualizer.extract_features(raw_df=raw_df) # extract features for plotting
+fwd_df = pd.read_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv") # forward gait
+bkwd_df = pd.read_csv("csv_trajectory_datasets/backwards_gait_phase_master_trajectories.csv") # backward gait
+turning_df = pd.read_csv("csv_trajectory_datasets/turning_gait_phase_master_trajectories.csv") # gait with turning
+train_raw_df = pd.concat([fwd_df, bkwd_df, turning_df], axis=0) # combine all datasets into one dataframe
 
-LH_thetas = np.column_stack((LH_CTr_theta, LH_TrF_theta, LH_FTi_theta))
-LH_vels = np.column_stack((LH_CTr_vel, LH_TrF_vel, LH_FTi_vel))
+test_raw_df = fwd_df # use forward gait as test dataset
+
+train_LH_CTr_theta, train_LH_TrF_theta, train_LH_FTi_theta, train_LH_CTr_vel, train_LH_TrF_vel, train_LH_FTi_vel = Visualizer.extract_features(raw_df=train_raw_df) # extract features for plotting
+test_LH_CTr_theta, test_LH_TrF_theta, test_LH_FTi_theta, test_LH_CTr_vel, test_LH_TrF_vel, test_LH_FTi_vel = Visualizer.extract_features(raw_df=test_raw_df) # extract features for plotting
+
+GRF_z = test_raw_df["LH_GRF_z"] # only for plotting, not used in autoencoder training
+
+
+train_LH_thetas = np.column_stack((train_LH_CTr_theta, train_LH_TrF_theta, train_LH_FTi_theta))
+train_LH_vels = np.column_stack((train_LH_CTr_vel, train_LH_TrF_vel, train_LH_FTi_vel))
+
+test_LH_thetas = np.column_stack((test_LH_CTr_theta, test_LH_TrF_theta, test_LH_FTi_theta))
+test_LH_vels = np.column_stack((test_LH_CTr_vel, test_LH_TrF_vel, test_LH_FTi_vel))
 
 # add Gaussian noise to tensors
 def add_noise(x):
     noise = np.random.normal(loc=0, scale=0.1, size=x.shape)
     return x + noise
 
-LH_thetas_noised = add_noise(LH_thetas)
-LH_vels_noised = add_noise(LH_vels)
+train_LH_thetas_noised = add_noise(train_LH_thetas)
+train_LH_vels_noised = add_noise(train_LH_vels)
+
+test_LH_thetas_noised = add_noise(test_LH_thetas)
+test_LH_vels_noised = add_noise(test_LH_vels)
 
 scaler = StandardScaler()
-scaled_LH_thetas = scaler.fit_transform(LH_thetas_noised)
-scaled_LH_vels = scaler.fit_transform(LH_vels_noised)
+scaled_train_LH_thetas = scaler.fit_transform(train_LH_thetas_noised)
+scaled_train_LH_vels = scaler.fit_transform(train_LH_vels_noised)
+
+scaled_test_LH_thetas = scaler.transform(test_LH_thetas_noised)
+scaled_test_LH_vels = scaler.transform(test_LH_vels_noised)
 
 # sequence function adaptation for autoencoder input
 def create_seq(data, seq_length):
@@ -55,21 +73,25 @@ def create_seq(data, seq_length):
     return np.array(X)
 
 SEQ_LENGTH = 6 
-X_theta = create_seq(scaled_LH_thetas, seq_length=SEQ_LENGTH) 
-X_vel = create_seq(scaled_LH_vels, seq_length=SEQ_LENGTH) 
+train_X_theta = create_seq(scaled_train_LH_thetas, seq_length=SEQ_LENGTH) 
+train_X_vel = create_seq(scaled_train_LH_vels, seq_length=SEQ_LENGTH) 
+test_X_theta = create_seq(scaled_test_LH_thetas, seq_length=SEQ_LENGTH)
+test_X_vel = create_seq(scaled_test_LH_vels, seq_length=SEQ_LENGTH)
 
 # convert to tensor
-X_theta_tensor = torch.from_numpy(X_theta).float()
-X_vel_tensor = torch.from_numpy(X_vel).float()
+trainX_theta_tensor = torch.from_numpy(train_X_theta).float()
+trainX_vel_tensor = torch.from_numpy(train_X_vel).float()
+testX_theta_tensor = torch.from_numpy(test_X_theta).float()
+testX_vel_tensor = torch.from_numpy(test_X_vel).float()
 
 
-print(f"Input shape (joint angles): {X_theta_tensor.shape}")
-print(f"Input shape (velocity): {X_vel_tensor.shape}")
+print(f"Input shape (joint angles): {trainX_theta_tensor.shape}")
+print(f"Input shape (velocity): {trainX_vel_tensor.shape}")
 
 
 # get number of features for each sesnor stream to be used in model initialization
-orig_num_feature_theta = X_theta_tensor.shape[2] 
-orig_num_feature_vel = X_vel_tensor.shape[2] 
+orig_num_feature_theta = trainX_theta_tensor.shape[2] 
+orig_num_feature_vel = trainX_vel_tensor.shape[2] 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 2. Initiazlize Models
@@ -87,7 +109,7 @@ BETA = 1.0   #weight for joint angles
 GAMMA = 2.0  #weight for velocity
 
 # concatenate into a tensor dataset and then dataloader to go through each tensor in chunks of 64
-dataset = TensorDataset(X_theta_tensor, X_vel_tensor)
+dataset = TensorDataset(trainX_theta_tensor, trainX_vel_tensor)
 dataloader = DataLoader(dataset, batch_size=64)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 3. Training Loop 
@@ -127,7 +149,7 @@ model.eval() # stop training
 recons = []
 with torch.no_grad():
     for _ in range(30):  # run multiple times to get different dropout samples
-        recon_theta, recon_vel, probs = model(X_theta_tensor, X_vel_tensor) # get probabilities and reconstructed inputs
+        recon_theta, recon_vel, probs = model(testX_theta_tensor, testX_vel_tensor) # get probabilities and reconstructed inputs
         recons.append(probs) # save probabilities of each run. dropout will cause some variation in the probabilities, which can be used to estimate uncertainty.
 
 # take mean of the reconstructed probabilities
@@ -148,13 +170,13 @@ swing_indices = np.where(swing_phase_mask == 1)[0]
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # plot raw features before range fractionation
-#Visualizer.plot_features(raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel)
+#Visualizer.plot_features(train_raw_df["time"], LH_CTr_theta, LH_TrF_theta, LH_FTi_theta, LH_CTr_vel, LH_TrF_vel, LH_FTi_vel)
 
 # plot range fractionated input for thetas as example of what it looks like
 range_frac_inst = GaussianRangeFractionation(num_neurons=1, min_value=-1.0, max_value=1.0)
-theta_frac = range_frac_inst(X_theta_tensor).detach().cpu().numpy()
+theta_frac = range_frac_inst(testX_theta_tensor).detach().cpu().numpy()
 
 #Visualizer.plot_rangeFrac_example(theta_frac=theta_frac)
 
 # GRFs over time in cartesian coords with labels
-Visualizer.plot_labeledGRF(raw_df=raw_df, raw_data_GRF=GRF_z, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_indices)
+Visualizer.plot_labeledGRF(raw_df=test_raw_df, raw_data_GRF=GRF_z, SEQ_LENGTH=SEQ_LENGTH, swing_indices=swing_indices)

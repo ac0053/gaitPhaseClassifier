@@ -28,9 +28,6 @@ swing_duration=0.5 #s
 stance_duty=0.6 #s
 step_height=[.07,.07,.06,.06,.07,.07]
 floor_level= 0.125
-
-
-
 spring=0
 max_joint_vel=1.5
 max_body_trans=0.085
@@ -277,7 +274,7 @@ with viewer.launch_passive(model, data) as v:
     
             for leg_idx, current_leg_name in enumerate(leg_names):
                 joints = leg_joint_map[current_leg_name]
-                kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step]
+                kinematics_slice = full_kinematics[leg_idx, 0, 0][:, -step % samps_per_step]
         
                 for idx, j in enumerate(joints):
                     qpos_addr = joint_qpos_addrs[j]
@@ -290,7 +287,7 @@ with viewer.launch_passive(model, data) as v:
             mujoco.mj_rnePostConstraint(model, data) 
     
             for leg_idx, current_leg_name in enumerate(leg_names):
-                grf_arr = grf[leg_idx, step % samps_per_step, :]
+                grf_arr = grf[leg_idx, -step % samps_per_step, :]
                 row.append(grf_arr[2])
         
                 for j in leg_joint_map[current_leg_name]:
@@ -307,5 +304,5 @@ with viewer.launch_passive(model, data) as v:
             step += 1
 # export full master trajectory dataset
 df = pd.DataFrame(row_data, columns=csv_headers)
-df.to_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv", index=False)
+df.to_csv("csv_trajectory_datasets/backwards_gait_phase_master_trajectories.csv", index=False)
 print("dataset saved!")
