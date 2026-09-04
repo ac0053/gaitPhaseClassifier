@@ -31,8 +31,8 @@ deterministic(seed=42)
 fwd_df = pd.read_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv") # forward gait
 bkwd_df = pd.read_csv("csv_trajectory_datasets/backwards_gait_phase_master_trajectories.csv") # backward gait
 turning_df = pd.read_csv("csv_trajectory_datasets/turning_gait_phase_master_trajectories.csv") # gait with turning
-train_raw_df = pd.concat([fwd_df, bkwd_df, turning_df], axis=0) # combine all datasets into one dataframe
 
+train_raw_df = pd.concat([fwd_df, bkwd_df, turning_df], axis=0) # combine all datasets into one dataframe
 test_raw_df = fwd_df # use forward gait as test dataset
 
 train_LH_CTr_theta, train_LH_TrF_theta, train_LH_FTi_theta, train_LH_CTr_vel, train_LH_TrF_vel, train_LH_FTi_vel = Visualizer.extract_features(raw_df=train_raw_df) # extract features for plotting
@@ -75,12 +75,14 @@ def create_seq(data, seq_length):
 SEQ_LENGTH = 6 
 train_X_theta = create_seq(scaled_train_LH_thetas, seq_length=SEQ_LENGTH) 
 train_X_vel = create_seq(scaled_train_LH_vels, seq_length=SEQ_LENGTH) 
+
 test_X_theta = create_seq(scaled_test_LH_thetas, seq_length=SEQ_LENGTH)
 test_X_vel = create_seq(scaled_test_LH_vels, seq_length=SEQ_LENGTH)
 
 # convert to tensor
 trainX_theta_tensor = torch.from_numpy(train_X_theta).float()
 trainX_vel_tensor = torch.from_numpy(train_X_vel).float()
+
 testX_theta_tensor = torch.from_numpy(test_X_theta).float()
 testX_vel_tensor = torch.from_numpy(test_X_vel).float()
 
@@ -97,7 +99,7 @@ orig_num_feature_vel = trainX_vel_tensor.shape[2]
 # 2. Initiazlize Models
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 model = GRUAutoEncoder(theta_num_features=orig_num_feature_theta, vel_num_features=orig_num_feature_vel,
-                        theta_neurons=1600, vel_neurons=3200,
+                        theta_neurons=1600, vel_neurons=1600,
                            hidden_dim=64, latent_dim=1) # GRU autoencoder model -> want latent_dim to be 1 to convert to sigmoid
 
 # loss and optimizer definitions
@@ -163,7 +165,7 @@ print(f"Uncertainty score (average variance across all samples): {uncertainty_sc
 swing_phase_mask = (avg_probs > 0.5).numpy()[SEQ_LENGTH:]  # convert probabilities to binary labels. stance phase is 0, swing phase is 1
 GRF_z = GRF_z[SEQ_LENGTH:] # match sequencced outputs
 
-swing_indices = np.where(swing_phase_mask == 1)[0]
+swing_indices = np.where(swing_phase_mask == 0)[0]
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 6. Plot Data
