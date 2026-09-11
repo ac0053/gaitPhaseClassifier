@@ -244,24 +244,27 @@ leg_joint_map = {}
 leg_effector_map = {}
 
 csv_headers = ['time']
-for current_leg_name in leg_names:
-    matched_joints = [j for j in joint_names if current_leg_name in j]
-    matched_effector = [e for e in effectors if current_leg_name in e]
+leg_idx = 4 # take data for only one leg (LF) for now, can be changed to any leg index 0-5
+current_leg_name = leg_names[leg_idx]
+
+sensor_id_1 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, f"{current_leg_name}_Troch_CS") # trochlear torque sensor
+sensor_id_2 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, f"{current_leg_name}_Tibia_CS") # tibial torque sensor
+
+csv_headers.extend([f"{current_leg_name}_Torque_Troch_CS_x", f"{current_leg_name}_Torque_Troch_CS_y", f"{current_leg_name}_Torque_Troch_CS_z"])
+csv_headers.extend([f"{current_leg_name}_Torque_Tibia_CS_x", f"{current_leg_name}_Torque_Tibia_CS_y", f"{current_leg_name}_Torque_Tibia_CS_z"])
+
+matched_joints = [j for j in joint_names if current_leg_name in j]
+matched_effector = [e for e in effectors if current_leg_name in e]
     
-    leg_joint_map[current_leg_name] = matched_joints
-    leg_effector_map[current_leg_name] = matched_effector
+leg_joint_map[current_leg_name] = matched_joints
+leg_effector_map[current_leg_name] = matched_effector
     
-    # append headers sequentially for this leg
-    csv_headers.append(f"{current_leg_name}_GRF_z")
-    for j in matched_joints:
-        csv_headers.extend([f"{j}_theta", f"{j}_vel"])
-        j_id = model.joint(j).id
-        joint_qpos_addrs[j] = model.jnt_qposadr[j_id]
-        joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
-        
-    for e in matched_effector:
-        csv_headers.extend([f"{e}_linear_acc_z"])
-        effector_body_ids[e] = model.body(e).id
+# append headers sequentially for this leg
+for j in matched_joints:
+    csv_headers.extend([f"{j}_theta", f"{j}_vel"])
+    j_id = model.joint(j).id
+    joint_qpos_addrs[j] = model.jnt_qposadr[j_id]
+    joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
 
 row_data = []
 duration = 10.0  # seconds
@@ -274,38 +277,40 @@ with viewer.launch_passive(model, data) as v:
         while v.is_running() and step <= num_steps:
             current_time = step * dt
             row = [current_time]
-    
-            for leg_idx, current_leg_name in enumerate(leg_names):
-                joints = leg_joint_map[current_leg_name]
-                kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step]
-        
-                for idx, j in enumerate(joints):
-                    qpos_addr = joint_qpos_addrs[j]
-                    prev_pos = data.qpos[qpos_addr]
-                    next_pos = kinematics_slice[idx]
-                    data.qpos[qpos_addr] = next_pos
-                    data.qvel[joint_qvel_addrs[j]] = (next_pos - prev_pos) / dt
+            joints = leg_joint_map[current_leg_name]
+            kinematics_slice = full_kinematics[leg_idx, 0, 0][:, step % samps_per_step] 
+
+            for idx, j in enumerate(joints):
+                qpos_addr = joint_qpos_addrs[j]
+                prev_pos = data.qpos[qpos_addr]
+                next_pos = kinematics_slice[idx]
+                data.qpos[qpos_addr] = next_pos
+                data.qvel[joint_qvel_addrs[j]] = (next_pos - prev_pos) / dt
 
             mujoco.mj_forward(model, data)
-            mujoco.mj_rnePostConstraint(model, data) 
-    
-            for leg_idx, current_leg_name in enumerate(leg_names):
-                grf_arr = grf[leg_idx, step % samps_per_step, :]
-                row.append(grf_arr[2])
+            mujoco.mj_rnePostConstraint(model, data)
+
+            # append data after forward dynamics step to get the correct joint torques and GRF values
+            troch_sensor_adr = model.sensor_adr[sensor_id_1]
+            tibia_sensor_adr = model.sensor_adr[sensor_id_2]
+            torque_troch = data.sensordata[troch_sensor_adr:troch_sensor_adr + 3]
+            torque_tibia = data.sensordata[tibia_sensor_adr:tibia_sensor_adr + 3]
+            row.append(torque_troch[0]) # troch x
+            row.append(torque_troch[1]) # troch y
+            row.append(torque_troch[2]) # troch z
+            row.append(torque_tibia[0]) # tibia x
+            row.append(torque_tibia[1]) # tibia y
+            row.append(torque_tibia[2]) # tibia z
         
-                for j in leg_joint_map[current_leg_name]:
-                    row.append(data.qpos[joint_qpos_addrs[j]])
-                    row.append(data.qvel[joint_qvel_addrs[j]])
-            
-                for e in leg_effector_map[current_leg_name]:
-                    b_id = effector_body_ids[e]
-                    lin_accel = data.cacc[b_id]
-                    row.append(lin_accel[5]) # spatial acceleration z-component
+            for j in leg_joint_map[current_leg_name]:
+                row.append(data.qpos[joint_qpos_addrs[j]]) # joint angles
+                row.append(data.qvel[joint_qvel_addrs[j]]) # joint velocities
+    
             v.sync()
             sleep(0.1)
             row_data.append(row)
             step += 1
 # export full master trajectory dataset
 df = pd.DataFrame(row_data, columns=csv_headers)
-df.to_csv("csv_trajectory_datasets/gait_phase_master_trajectories.csv", index=False)
+df.to_csv("csv_trajectory_datasets/gait_phase_LF_fwd_trajectories.csv", index=False)
 print("dataset saved!")
