@@ -33,7 +33,7 @@ bkwd_df = pd.read_csv("csv_trajectory_datasets/backwards_gait_phase_master_traje
 turning_df = pd.read_csv("csv_trajectory_datasets/turning_gait_phase_master_trajectories.csv") # gait with turning
 
 train_raw_df = pd.concat([fwd_df, bkwd_df, turning_df], axis=0) # combine all datasets into one dataframe
-test_raw_df = fwd_df # use forward gait as test dataset
+test_raw_df = turning_df # use forward gait as test dataset
 
 train_LH_CTr_theta, train_LH_TrF_theta, train_LH_FTi_theta, train_LH_CTr_vel, train_LH_TrF_vel, train_LH_FTi_vel = Visualizer.extract_features(raw_df=train_raw_df) # extract features for plotting
 test_LH_CTr_theta, test_LH_TrF_theta, test_LH_FTi_theta, test_LH_CTr_vel, test_LH_TrF_vel, test_LH_FTi_vel = Visualizer.extract_features(raw_df=test_raw_df) # extract features for plotting

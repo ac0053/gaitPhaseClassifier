@@ -3,15 +3,21 @@ import mujoco
 import math
 import matplotlib.pyplot as plt
 from scipy import interpolate
-from scipy.optimize import fsolve
+from scipy.optimize import root
 import copy
-
+import sys
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from inverse_solvers.leg_height_con import leg_height_con
+from scipy.optimize import minimize
+from mujoco import viewer
 
 class InverseKinematics:
-    def __init__(self, model, data, num_rot, num_trans, leg_names, effectors, joint_names, p_base, stance_duty,
+    def __init__(self, num_rot, num_trans, leg_names, effectors, joint_names, p_base, stance_duty,
                  max_body_trans, max_body_rot, swing_duration, step_height, samps_per_step):
-        self.model = model
-        self.data = data
+
         self.leg_names = leg_names
         self.effectors = effectors
         self.joint_names = joint_names
@@ -36,10 +42,11 @@ class InverseKinematics:
             print("The path for this rot and mat could not be found")
 
     # specify rotations and translations wrt base point
-    def trans_rot_wrt_base(self, leg, num_trans, num_rot):
+    def trans_rot_wrt_base(self, data, leg, num_trans, num_rot):
         leg_trans = np.linspace(-self.max_body_trans, self.max_body_trans, num_trans)
         leg_rot = np.linspace(-self.max_body_rot, self.max_body_rot, num_rot)
         trans_mat = np.meshgrid(leg_trans, leg_rot)[0]
+        trans_mat = trans_mat.T
 
         rot_mat = np.zeros((num_trans, num_rot))
         for i in range(num_trans):
@@ -48,19 +55,20 @@ class InverseKinematics:
             else:
                 theta_lim = -leg_trans[i] * self.max_body_rot / self.max_body_trans + self.max_body_rot
             rot_mat[i, :] = np.linspace(-theta_lim, theta_lim, num_rot)
-        rot_mat = rot_mat.T
+        # rot_mat = rot_mat.T
 
         # find position of each foot wrt base point- will be used to find the foot velocity for each trans and rot velocity
-        p_foot = self.data.body(self.effectors[leg]).xpos
+        p_foot = data.site(self.effectors[leg]).xpos
         r_foot_wrt_base = p_foot - self.p_base
 
         return trans_mat, rot_mat, r_foot_wrt_base, leg_trans, leg_rot
 
     # stance_vec is the position of the foot of a certain leg at a specific rotation and translation
-    def stance_vec_calc(self, r_foot_wrt_base, rot_mat, trans_mat, leg, tran, rot):
+    def stance_vec_calc(self, r_foot_wrt_base, body_rot_per_step, body_trans_per_step):
         j_p = np.array(r_foot_wrt_base)
-        psi = rot_mat[rot, tran]
-        r = [trans_mat[rot, tran], 0, 0]
+        psi = body_rot_per_step
+        r = [body_trans_per_step, 0, 0]
+        print("psi = " + str(psi) + ", r = " + str(r))
         r_one_frame = np.array(
             [[math.cos(psi / (self.num_samps_per_step - 1)), -math.sin(psi / (self.num_samps_per_step - 1)), 0],
              [math.sin(psi / (self.num_samps_per_step - 1)), math.cos(psi / (self.num_samps_per_step - 1)), 0],
@@ -118,6 +126,8 @@ class InverseKinematics:
              [0, 1, 2 * tf, 3 * tf ** 2, 4 * tf ** 3, 5 * tf ** 4],
              [0, 0, 2, 6 * tf, 12 * tf ** 2, 20 * tf ** 3]])
 
+        # WHAT THE HELL all this is screwed up. #This only works if the stance_duty is 0.5. But it could be anything.
+
         swing_x_vel = (x_min - x_max) / self.stance_duration
         swing_x_acc = 0
         single_time_step = self.stance_duration / step_num
@@ -149,18 +159,15 @@ class InverseKinematics:
         # interpolate z coordinates in swing based stance
         if invalid:
             y5_sw = np.zeros_like(x5_sw)
-            print('method 1')
         elif np.linalg.norm(x5_sw) != 0:
             # Pchip only allows for strictly increasing monotonic series, need to check if strictly decreasing
             # This condition checks if stance_vec[0, :] increases monotonically.
             if all(np.diff(stance_vec[0, :]) > 0):
                 interp = interpolate.PchipInterpolator(stance_vec[0, :], stance_vec[1, :], extrapolate=True)
                 y5_sw = interp(x5_sw)
-                print('method 2')
             elif all(np.diff(stance_vec[0, :]) < 0):
                 interp = interpolate.PchipInterpolator(np.flip(stance_vec[0, :]), np.flip(stance_vec[1, :]), extrapolate=True)
                 y5_sw = interp(x5_sw)
-                print('method 3')
             else:
                 stance_x_reverse = []
                 stance_z_reverse = []
@@ -172,10 +179,8 @@ class InverseKinematics:
                 y5_sw = []
                 for b in range(y5_sw_reverse.shape[0] - 1, -1, -1):
                     y5_sw.append(y5_sw_reverse[b])
-                print('method 4')
         else:
             y5_sw = np.zeros_like(x5_sw)
-            print('method 5')
         foot_path_sw_new_5th = np.zeros((3, self.num_samps_per_step))
         foot_path_sw_new_5th[0, :] = x5_sw
         foot_path_sw_new_5th[1, :] = y5_sw
@@ -206,123 +211,264 @@ class InverseKinematics:
 
         return foot_path, foot_path_st_f_new, foot_path_sw_new_5th
 
-    # at a specific translation and rotation, use moore_penorse to solve for theta
-    def moore_penrose(self, leg, r_foot_wrt_base, foot_path):
+    # at a specific translation and rotation, use moore_penrose to solve for theta
+    def moore_penrose(self, model, data, leg, r_foot_wrt_base, foot_path, start_and_end_same_point=False):
+
         # find active joints for the leg
         joint_id = []
         for joints in self.joint_names:
             if self.leg_names[leg] in joints:
-                joint_id.append(self.model.joint(joints).id)
+                joint_id.append(model.joint(joints).id)
+        j_qposaddr = model.jnt_qposadr[joint_id]
+        qvel_addr = model.jnt_dofadr[joint_id]
 
-        # if leg has a body joint then flex it proportionally to the heading angle
-        p_foot = self.data.body(self.effectors[leg]).xpos
-        if any(np.isnan(p_foot)):
+        data.qpos[j_qposaddr] = 0  # This is the rest configuration
+        mujoco.mj_forward(model, data)
+
+        p_foot0 = copy.deepcopy(data.site(self.effectors[leg]).xpos)
+        if any(np.isnan(p_foot0)):
             # This leg does not have a resting posture
             raise Exception("Leg with name \"" + self.leg_names[leg] + "\" has no rest posture defined, "
                             "so inverse kinematics cannot be calculated.")
 
-        r_foot_wrt_base[:] = p_foot - self.p_base
+        if np.linalg.norm(foot_path[:, 0]) > 1e-6:
+            # Foot paths aren't centered at the foot's position at rest.
+            1+1
+
+        # r_foot_wrt_base[:] = p_foot - self.p_base
 
         step_frequency = 1 / (self.stance_duration + self.swing_duration)
-
-        # save resting posture for easier use to solve for aep and pep configurations
-        resting = self.data.qpos[joint_id]
 
         # figure out what IDs AEP and PEP are for this foot trajectory
         # use moore-penrose pseudo-inverse of the body-fram jacobian. Will find the joint velocities that move the foot
         # along the desired trajectories with the least joint motion possible
         # save position of the root body for comparison to foot positions
-        q_vec = []
-        for joints in joint_id:
-            q_vec.append(self.data.qpos[joints])
-        body_center = self.data.body("Thorax").xpos - self.p_base
-        end_effector = self.data.body(self.effectors[leg]).xpos
-        start_point = end_effector - self.p_base
 
+        # body_center = data.body("Thorax").xpos - self.p_base
+        # end_effector = data.site(self.effectors[leg]).xpos
+        # start_point = end_effector - self.p_base
+
+        unique_solution = bool(len(j_qposaddr) == 3)
         num_steps = foot_path.shape[1]
         print("num_steps = " + str(num_steps))
-        kinematics = np.empty((len(joint_id), num_steps))
-        r_foot = np.empty((3, num_steps))
-        r_foot[:, 0] = start_point
-        q_vec = np.array(q_vec)
-        kinematics[:, 0] = q_vec.T
-        orig_joints = joint_id
+        kinematics = np.empty((len(j_qposaddr), num_steps))
+        r_foot = np.zeros((3, num_steps))
+        # r_foot[:, 0] is deliberately 0.
+        r_foot_imp = np.zeros((3, num_steps))
+        kinematics[:, 0] = 0
+        kinematics_imp = np.empty((len(j_qposaddr), num_steps))
+        kinematics_imp[:, 0] = 0
+        # orig_joints = joint_id
 
         # compute joint kinematics for the desired motion
-        ind = 1
-        to_continue = True
-        jacp = np.zeros((3, self.model.nv))
-        jacr = np.zeros((3, self.model.nv))
-        body_id = self.model.body(self.effectors[leg]).id
-        lower_limit = self.model.jnt_range[joint_id, 0]
-        upper_limit = self.model.jnt_range[joint_id, 1]
+        i = 1
+        ftol = 1e-6
+        to_continue_stepping = True
+        jacp = np.zeros((3, model.nv))
+        jacr = np.zeros((3, model.nv))
+        site_id = model.site(self.effectors[leg]).id
 
-        while ind < num_steps and to_continue:
-            # Plug in previous joint angles (kinematics) and advance the model.
-            self.data.qpos[orig_joints] = kinematics[:, ind - 1]
-            mujoco.mj_forward(self.model, self.data)
-
-            # Foot position at previous joint angles
-            effector_position = self.data.body(body_id).xpos
-            r_foot[:, ind] = effector_position - self.p_base  # Not sure this is needed here.
-
-            # Get the jacobian of this leg's end effector when it is in this configuration.
-            # jacp is the position-specific component, jacr is the rotation-specific component. Do we need jacr here?
-            mujoco.mj_jacBody(self.model, self.data, jacp, jacr, body_id)
-            jac_active_init = jacp[:, joint_id]
-
-            #  FOR MIDPOINT METHOD, step the model forward a half step:
-            dx = foot_path[:, ind] - foot_path[:, ind - 1]
-            try:
-                self.data.qpos[orig_joints] = kinematics[:, ind - 1] + 0.5 * np.linalg.pinv(jac_active_init) @ dx
-            except np.linalg.LinAlgError:
-                1 + 1
-
-            mujoco.mj_forward(self.model, self.data)
-
-            # Get the jacobian of this leg's end effector in the "half-step" configuration.
-            mujoco.mj_jacBody(self.model, self.data, jacp, jacr, body_id)
-            jac_active_half = jacp[:, joint_id]
-            # Half-step complete
-            #
-            # now the full step, using the half-step Jacobian and the full step distance.
-            #
-            kinematics[:, ind] = kinematics[:, ind - 1] + np.linalg.pinv(jac_active_half) @ dx
-
-            """
-            # Interior Penalty Search
-            current_q = self.data.qpos[joint_id]
-            gamma = 1e-2
-            tol = 1e-12
-            all_within_bounds = False
-
-            """ """
-             NICK: I understand decreasing the ik_config_change to keep joints within their limits, but if the process
-             assumes equal changes in time between configs, then reducing ik_config_change will cause the motion to slow
-             in an unexpected/unaccounted for way.
+        j_max = int(1e4)
+        if unique_solution:
+            print("Searching for unique solution.")
+            while i < num_steps and to_continue_stepping:
                 """
+                dx = foot_path[:, i] - foot_path[:, i - 1]
+
+                candidate_config = kinematics_imp[:, i - 1]
+                converged = False
+                to_continue_searching = True
+                j = 0
+                f_list = np.empty((3, j_max))
+                x_list = np.empty((len(joint_id), j_max))
+                jac_list = np.empty((3, len(joint_id), j_max))
+
+                x_list[:, 0] = candidate_config
+                jac, p = self.set_config_get_jacobian(model, data, joint_id, site_id, p_foot0, candidate_config)
+                # f must include the actual foot position in the candidate_config to ensure convergence.
+                f_candidate = foot_path[:, i] - p
+                f_list[:, 0] = f_candidate
+                jac_list[:, :, 0] = jac
+                delta_x = np.zeros((len(joint_id),))
+
+                while to_continue_searching:
+                    to_direction_search = False
+                    if np.linalg.norm(f_list[:, j]) < 1e-9:
+                        converged = True
+                        to_continue_searching = False
+                        x_final = x_list[:, j]
+                        f_final = f_list[:, j]
+                        print("solved, f: " + str(f_final) + ", config: " + str(x_final) + ", loops: " + str(j))
+                        print(np.linalg.cond(jac_list[:, :, j] @ jac_list[:, :, j].T))
+                    elif j >= j_max:
+                        converged = False
+                        to_continue_searching = False
+                        x_final = np.full_like(x_list[:, j], np.nan)
+                        f_final = np.full_like(f_list[:, j], np.nan)
+                        print("maxit, f: " + str(f_final) + ", config: " + str(x_final) + ", loops: " + str(j))
+                        print(np.linalg.cond(jac_list[:, :, j].T @ jac_list[:, :, j]))
+                    else:
+                        converged = False
+                        to_continue_searching = True
+                        to_direction_search = True
+
+                    if to_continue_searching and to_direction_search:
+                        # jac, p = self.set_config_get_jacobian(model, data, joint_id, site_id, p_foot0, candidate_config)
+                        # f must include the actual foot position in the candidate_config to ensure convergence.
+                        # f = foot_path[:, i] - p
+                        # Take a Newton step, with the understanding that the manipulator jacobian is df/dtheta.
+                        delta_x = np.linalg.pinv(jac_list[:, :, j]) @ f_list[:, j]
+
+                        # Evaluate the function at the candidate solution
+                        jac, p = self.set_config_get_jacobian(model, data, joint_id, site_id, p_foot0,
+                                                              x_list[:, j] + delta_x)
+                        f_candidate = foot_path[:, i] - p
+                        # If the candidate configuration x_list + delta_x moved f further from 0, we need to "line search"
+                        while bool(np.linalg.norm(f_candidate) > np.linalg.norm(f_list[:, j])):
+                            delta_x = delta_x / 2
+                            print("j = " + str(j) + ", delta_x = " + str(delta_x))
+
+                            # Evaluate the function at the candidate solution
+                            jac, p = self.set_config_get_jacobian(model, data, joint_id, site_id, p_foot0,
+                                                                  x_list[:, j] + delta_x)
+                            f_candidate = foot_path[:, i] - p
+
+                            if np.linalg.norm(delta_x) < 1e-9:
+                                to_line_search = False
+                                to_continue_searching = False
+                                x_final = x_list[:, j]
+                                f_final = f_list[:, j]
+                                print("stalled, f: " + str(f_final) + ", config: " + str(x_final) + ", loops: " + str(j))
+                                print(np.linalg.cond(jac_list[:, :, j].T @ jac_list[:, :, j]))
+
+                    #Are we sure these are the latest, best estimates?
+                    try:
+                        f_list[:, j + 1] = f_candidate
+                    except NameError:
+                        print("f_candidate not assigned.")
+                        1+1
+
+                    try:
+                        x_list[:, j + 1] = x_list[:, j] + delta_x
+                    except NameError:
+                        print("delta_x not assigned.")
+                        1+1
+
+                    jac_list[:, :, j + 1] = jac
+                    # If foot position error is close to 0, quit searching and output some info.
+
+                    j += 1
+
+                kinematics_imp[:, i] = x_final
+                r_foot_imp[:, i] = p
+                """
+
+                """ BELOW, REPLACE WITH ROOT """
+                # Use root to solve inverse kinematics, compare to custom script.
+
+                f_position = lambda x: foot_path[:, i] - self.set_config_get_jacobian(model, data, j_qposaddr, qvel_addr, site_id, p_foot0, x)[1]
+                g_jacobian = lambda x: -self.set_config_get_jacobian(model, data, j_qposaddr, qvel_addr, site_id, p_foot0, x)[0]
+
+                options = {"maxfev": int(1e3), "xtol": 1e-10}
+                result = root(f_position, kinematics_imp[:, i - 1], method='hybr', jac=g_jacobian, options=options)
+                kinematics_imp[:, i] = result.x
+                if result.status != 1:
+                    if np.linalg.norm(result.fun) > ftol:
+                        print("Result " + str(result.status) + ": " + result.message + ", " + str(result.fun))
+                        start_and_end_same_point = True
+                    """
+                    with viewer.launch_passive(model, data) as v:
+                        while v.is_running():
+                            # mujoco.mj_step(model, data)
+                            v.sync()
+                    """
+                    1+1
+                r_foot_imp[:, i] = foot_path[:, i] - result.fun
+
+                i += 1
+
+        else:
+            # Not a unique solution, so we need a minimization approach
+            while i < num_steps:
+                g_distance = lambda x: np.dot(x, x)
+                bounds = [(-np.pi, np.pi)] * len(j_qposaddr)
+                options = {"ftol": 1e-10, "maxiter": 1e3}
+                # constrain the leg posture for the z (height)
+
+                cons = ({'type': "eq", "fun": lambda x: leg_height_con(x, site_id, j_qposaddr, foot_path[:, i], data, model) - p_foot0})
+                result = minimize(g_distance, kinematics_imp[:, i-1], method='SLSQP', bounds=bounds, constraints=cons, options=options)
+                kinematics_imp[:, i] = result.x
+                if any(abs(result.x) > np.pi):
+                    print(result.x)
+                    print("Max constraint violation of " + str(cons["fun"](result.x)) + " after " + str(
+                        result.nit) + " iterations.")
+                    1+1
+                # print("Max constraint violation of " + str(cons["fun"](result.x)) + " after " + str(result.nit) + " iterations.")
+                jac_end, p_final = self.set_config_get_jacobian(model, data, j_qposaddr, qvel_addr, site_id, p_foot0, kinematics_imp[:, i])
+                r_foot_imp[:, i] = p_final
+
+                i += 1
+
+
+        if start_and_end_same_point:
+            # print("error: ")
+            # print(np.linalg.norm(kinematics[:, -1] - kinematics[:, 0]))
+            # If the norm of the error is too big, we need to reduce dt or something.
+            # Make adaptive time-step moore-penrose?
+
+            #I could, but easier would be to:
+            # define callable Jacobian function to act as "f(x) = dx/dt"
+            # use R-K45 to integrate. scipy.integrate.RK45
+            err = (r_foot[:, -1] - r_foot[:, 0])
+            print("vec error for p_inv of Jacobian = " + str(err))
+            err_imp = (r_foot_imp[:, -1] - r_foot_imp[:, 0])
+            print("vec error for N-R with Jacobian = " + str(err_imp))
+
+            """plt.figure()
+            for n in range(np.shape(foot_path)[0]):
+                # plt.plot(np.tile(foot_path[n, :], (3,)), label="axis " + str(n))
+                plt.plot(foot_path[n, :], label="com, axis " + str(n))
+            for n in range(np.shape(r_foot_imp)[0]):
+                # plt.plot(np.tile(foot_path[n, :], (3,)), label="axis " + str(n))
+                plt.plot(r_foot_imp[n, :], linestyle="dashed", label="act, axis " + str(n))
+            plt.legend()
+            plt.title("inside moore-penrose")
+            plt.ylabel("foot path (m)")
+            plt.grid()
+            plt.draw()
+
+            plt.figure()
+            for n in range(np.shape(kinematics_imp)[0]):
+                # plt.plot(np.tile(foot_path[n, :], (3,)), label="axis " + str(n))
+                plt.plot(np.tile(kinematics_imp[n, :], 3), label="imp joint " + str(n))
+            plt.legend()
+            plt.title("inside moore-penrose")
+            plt.ylabel("joint angles (rad)")
+            plt.grid()
+            plt.draw()
+
+            ax = plt.figure().add_subplot(projection='3d')
+            ax.plot(foot_path[0, :], foot_path[1, :], foot_path[2, :], label="prescribed path")
+            ax.plot(r_foot_imp[0, :], r_foot_imp[1, :], r_foot_imp[2, :], linestyle="dashed", label="actual path")
+            ax.legend()
+            ax.set(xlabel="x", ylabel="y")
+            ax.axis("equal")
+            ax.grid()
+            plt.show()
             """
-            while gamma >= tol:
-                penalty = -1 / (np.maximum(current_q - lower_limit, tol)) + 1 / (
-                    np.maximum(upper_limit - current_q, tol))
-                t_func_grad = np.float64(ik_config_change - (gamma * penalty))
-                next_config = current_q + t_func_grad
 
-                # if feasible, break. otherwise minimize t_func by gamma->0
-                if np.all(next_config >= lower_limit) and np.all(next_config <= upper_limit):
-                    kinematics[:, ind] = next_config
-                    self.data.qpos[joint_id] = next_config
-                    all_within_bounds = True
-                    break
-                gamma *= 0.5
+        return kinematics_imp, step_frequency
 
-            if foot_path[2, ind] == 0:
-                if self.data.body(body_id).xpos[2] > 0.20:
-                    self.wrong += 1
-            """
-            ind += 1
+    def set_config_get_jacobian(self, model, data, joint_id, joint_vel_id, site_id, p_foot0, config):
+        if not all(np.equal(config, data.qpos[joint_id])):
+            # If this config is new, assign it to qpos and update the model's kinematics.
+            data.qpos[joint_id] = config
+            mujoco.mj_kinematics(model, data)
 
-        return kinematics, step_frequency
+        jacp = np.zeros((3, model.nv))
+        mujoco.mj_kinematics(model, data)
+        mujoco.mj_jacSite(model, data, jacp, jacr=None, site=site_id)
+        return copy.deepcopy(jacp[:, joint_vel_id]), copy.deepcopy(data.site(site_id).xpos) - p_foot0
 
     def kinematics_scale(self, kinematics, foot_path, foot_path_st_f_new, foot_path_sw_new_5th, step_frequency):
         # scale the kinematics to the desired frequency and duty
