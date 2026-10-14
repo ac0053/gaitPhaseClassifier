@@ -3,16 +3,16 @@
    <default>
       <joint type="hinge" damping="0.2" stiffness="1" armature=".01" limited="true"/>
       <site size="0.001" />
-      <position kp="5" kv="0.5" forcelimited="true" forcerange="-1 1" ctrllimited="false"/>
+      <position kp="200" kv="1" forcelimited="false" ctrllimited="false"/>
    </default>
    <option gravity="0 0 -9.81" />
    <worldbody>
-      <geom name="floor" pos="0 0 0" euler="0 0 0" size="2 2 0.25" type="plane" material="MatPlane" rgba="1 1 1 1" condim="3" contype="1" conaffinity="1" solref="0.055 1" solimp="0.78 0.95 0.01" margin="0.0" />
+      <geom name="floor" pos="0 0 0" euler="0 0 0" size="2 2 0.25" type="plane" material="MatPlane" rgba="1 1 1 1" condim="3" contype="1" conaffinity="1" solref="0.055 1" solimp="0.95 0.95 0.01" margin="0.0" />
       <light name="spotlight" mode="targetbodycom" target="Thorax" diffuse=".8 .8 .8" specular="0.3 0.3 0.3" pos="0 -6 4" cutoff="30"/>
       <!--<geom name="ground" type = "plane" pos="0 0 0.2" size="1 1 0.06" contype="2" conaffinity="2" solref="0.02 2" solimp="0.5 0.8 0.1" margin="0.0"/>-->
       <body name="Thorax" pos="0.0 -0.0 0.1" quat="4.329637285359678e-17 4.329637285359677e-17 -0.7071067811865475 -0.7071067811865476">
          <freejoint name="root"/>
-         <geom type="box" size="0.2 0.005 0.035" mass="2.567" material='body' contype="1" conaffinity="1"/>
+         <geom type="box" size="0.2 0.005 0.035" mass="0.567" material='body' contype="0" conaffinity="0"/>
          <body name="LF_ThCBridge" pos="0.1155 0.04544 -0.08114" quat="0.30995045526580134 -0.6354753171277976 0.31001359029812403 -0.6356047596048306">
             <geom type="capsule" size="0.005 0.015" mass="0.0873" material='body' euler='0 90 0'/>
             <joint pos="-0.015 0.0 0.0" name="LF_ThC1" type="hinge" axis="0.6156309087425843 -0.7880345685043321 0.00032100307035379597" range="-50 90"/>
@@ -37,7 +37,7 @@
                               <!-- Total length 0.07, with 0.06 peeking out from the tarsus -->
                               <site name="LF_Tibia_CS" pos="-0.035 0 0" size="0.01"/>
                               <body name="LF_Tarsus" pos="0.0583 0.0283 0.0" quat="0.923879181092213 0.0 0.0 0.3826842807646818">
-                                 <geom type="capsule" size="0.005 0.04" mass="0.0207" material='body' euler='0 90 0' contype="0" conaffinity="0"/>
+                                 <geom type="capsule" size="0.005 0.04" mass="0.0207" material='body' euler='0 90 0' contype="1" conaffinity="1"/>
                                  <!-- <joint pos="-0.04 0.0 0.0" name="LF_TiTar" type="hinge" axis="-0.00020367320369518715 -0.00020367319947067752 -0.9999999585172261" range="-44.99999063801584 44.99999063801584" limited="true" /> -->
                                  <site name="LF_Tip" size="0.01" pos="0.04 -4.78e-07 0.0" quat="1.0 0.0 0.0 0.0">
                                  </site>
@@ -75,7 +75,7 @@
                               <!-- Total length 0.07, with 0.06 peeking out from the tarsus -->
                               <site name="RF_Tibia_CS" pos="-0.035 0 0" size="0.01"/>
                               <body name="RF_Tarsus" pos="0.0583 0.0283 0.0" quat="0.923879181092213 0.0 0.0 0.3826842807646818">
-                                 <geom type="capsule" size="0.005 0.04" mass="0.0207" material='body' euler='0 90 0' contype="0" conaffinity="0"/>
+                                 <geom type="capsule" size="0.005 0.04" mass="0.0207" material='body' euler='0 90 0' contype="1" conaffinity="1"/>
                                  <!-- <joint pos="-0.04 0.0 0.0" name="RF_TiTar" type="hinge" axis="-0.00020367320369518715 -0.00020367319947067752 -0.9999999585172261" range="-44.99999063801584 44.99999063801584" limited="true" /> -->
                                  <site name="RF_Tip" size="0.01" pos="0.04 -4.78e-07 0.0" quat="1.0 0.0 0.0 0.0">
                                  </site>
@@ -107,7 +107,7 @@
                            <geom type="capsule" size="0.005 0.04" mass="0.0255" material='body' euler='0 90 0' />
                            <site name="LM_Tibia_CS" pos="-0.045 0 0" size="0.01"/>
                            <body name="LM_Tarsus" pos="0.075 0.0 0.036" quat="0.923879181092213 0.0 -0.3826842807646818 0.0">
-                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="0" conaffinity="0"/>
+                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="1" conaffinity="1"/>
                               <site name="LM_Tip" size="0.01" pos="0.05 0.0 0.0" quat="1.0 0.0 0.0 0.0">
                               </site>
                            </body>
@@ -136,7 +136,7 @@
                            <geom type="capsule" size="0.005 0.04" mass="0.0255" material='body' euler='0 90 0' />
                            <site name="RM_Tibia_CS" pos="-0.045 0 0" size="0.01"/>
                            <body name="RM_Tarsus" pos="0.075 0.0 -0.036" quat="0.923879181092213 0.0 0.3826842807646818 0.0">
-                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="0" conaffinity="0"/>
+                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="1" conaffinity="1"/>
                               <site name="RM_Tip" size="0.01" pos="0.05 0.0 0.0" quat="1.0 0.0 0.0 0.0">
                               </site>
                            </body>
@@ -166,7 +166,7 @@
                            <geom type="capsule" size="0.005 0.04" mass="0.0255" material='body' euler='0 90 0' />
                            <site name="LH_Tibia_CS" pos="-0.045 0 0" size="0.01"/>
                            <body name="LH_Tarsus" pos="0.075 0.0 0.036" quat="0.923879181092213 0.0 -0.3826842807646818 0.0">
-                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="0" conaffinity="0"/>
+                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="1" conaffinity="1"/>
                               <site name="LH_Tip" size="0.01" pos="0.05 0.0 0.0" quat="1.0 0.0 0.0 0.0">
                               </site>
                            </body>
@@ -196,7 +196,7 @@
                            <geom type="capsule" size="0.005 0.04" mass="0.0255" material='body' euler='0 90 0' />
                            <site name="RH_Tibia_CS" pos="-0.045 0 0" size="0.01"/>
                            <body name="RH_Tarsus" pos="0.075 0.0 -0.036" quat="0.923879181092213 0.0 0.3826842807646818 0.0">
-                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="0" conaffinity="0"/>
+                              <geom type="capsule" size="0.005 0.05" mass="0.0252" material='body' euler='0 90 0' contype="1" conaffinity="1"/>
                               <site name="RH_Tip" size="0.01" pos="0.05 0.0 0.0" quat="1.0 0.0 0.0 0.0">
                               </site>
                            </body>

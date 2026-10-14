@@ -481,10 +481,9 @@ for leg_idx in range(num_legs):
 
     # append headers sequentially for this leg
     for j in matched_joints:
-        csv_headers.extend([f"{j}_theta", f"{j}_vel"])
+        csv_headers.extend([f"{j}_cmd", f"{j}_theta", f"{j}_vel"])
         j_id = model.joint(j).id
         joint_id.append(j_id)
-        joint_qpos_addrs[j] = model.jnt_qposadr[j_id]
         joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
 
 row_data = []
@@ -493,7 +492,7 @@ dt = 1e-2 # 100 Hz
 step = 0 # initialization for while loop
 num_steps = int(duration / dt)
 # just for simulation purposes
-num_translations = 0
+num_translations = 2
 num_rotations = 0
 
 with viewer.launch_passive(model, data) as v:
@@ -506,11 +505,11 @@ with viewer.launch_passive(model, data) as v:
             matched_joints = [j for j in joint_names if current_leg_name in j]
             kinematics_slice = full_kinematics[leg_idx, num_translations, num_rotations][:, step % num_samples_per_step]
             for idx, j in enumerate(matched_joints):
-                qpos_addr = joint_qpos_addrs[j]
-                prev_pos = data.qpos[qpos_addr]
+                act_id = model.actuator(j).id
+                prev_pos = data.ctrl[act_id]
                 next_pos = kinematics_slice[idx]
-                data.qpos[qpos_addr] = next_pos
-            mujoco.mj_forward(model, data)
+                data.ctrl[act_id] = next_pos
+            mujoco.mj_step(model, data)
             #mujoco.mj_rnePostConstraint(model, data) 
 
             # append data after forward dynamics step to get the correct joint torques and GRF values
@@ -526,7 +525,8 @@ with viewer.launch_passive(model, data) as v:
             row.append(torque_tibia[2]) # tibia z
         
             for j in leg_joint_map[current_leg_name]:
-                row.append(data.qpos[joint_qpos_addrs[j]]) # joint angles
+                row.append(next_pos) # joint command
+                row.append(data.ctrl[model.actuator(j).id]) # joint angles
                 row.append(data.qvel[joint_qvel_addrs[j]]) # joint velocities
     
         v.sync()
