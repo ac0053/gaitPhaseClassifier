@@ -85,7 +85,7 @@ leg_names = ["LH", "RH", "LM", "RM", "LF", "RF"]
 num_legs = 6
 body_names = [model.body(i).name for i in range(model.nbody)]
 site_names = [model.site(i).name for i in range(model.nsite)]
-joint_names = [model.jnt(i).name for i in range(model.njnt)][1:]
+joint_names = [model.jnt(i).name for i in range(model.njnt)][1:] # removes the first joint which is the floating base
 actuator_names = [model.actuator(i).name for i in range(model.nu)]
 effectors = [None] * len(leg_names)
 for sites in site_names:
@@ -175,6 +175,7 @@ for i in range(num_legs):
 
     # set resting posture to mujoco model
     model.qpos0[joint_id] = -rest_config
+    print(data.qpos[0:6])
     data.qpos[joint_id] = 0
     resting_posture[i] = rest_config
     # mujoco.mj_forward(model, data)
@@ -464,76 +465,114 @@ leg_joint_map = {}
 leg_effector_map = {}
 joint_id = []
 act_id = []
+dt = model.opt.timestep
+total_time = 10.0
+num_steps = int(total_time / dt)
 
-csv_headers = ['time']
-for leg_idx in range(num_legs):
-    current_leg_name = leg_names[leg_idx]
-
+for current_leg_name in leg_names:
     matched_joints = [j for j in joint_names if current_leg_name in j]
-    
     leg_joint_map[current_leg_name] = matched_joints
-
-    sensor_id_1 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, f"{current_leg_name}_Troch_CS") # trochlear internal force sensor
-    sensor_id_2 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, f"{current_leg_name}_Tibia_CS") # tibial internal force sensor
-
-    csv_headers.extend([f"{current_leg_name}_InternalForce_Troch_CS_x", f"{current_leg_name}_InternalForce_Troch_CS_y", f"{current_leg_name}_InternalForce_Troch_CS_z"])
-    csv_headers.extend([f"{current_leg_name}_InternalForce_Tibia_CS_x", f"{current_leg_name}_InternalForce_Tibia_CS_y", f"{current_leg_name}_InternalForce_Tibia_CS_z"])
-
-    # append headers sequentially for this leg
     for j in matched_joints:
-        csv_headers.extend([f"{j}_cmd", f"{j}_theta", f"{j}_vel"])
-        j_id = model.joint(j).id
-        joint_id.append(j_id)
-        joint_qvel_addrs[j] = model.jnt_dofadr[j_id]
+        joint_id = model.joint(j).id
+        joint_qpos_addrs[j] = model.jnt_qposadr[joint_id]
+        joint_qvel_addrs[j] = model.jnt_dofadr[joint_id]
 
-row_data = []
-duration = 10.0  # seconds
-dt = 1e-2 # 100 Hz
-step = 0 # initialization for while loop
-num_steps = int(duration / dt)
-# just for simulation purposes
-num_translations = 2
-num_rotations = 0
-
-with viewer.launch_passive(model, data) as v:
-    print("press esc to exit view")
-    while v.is_running() and step <= num_steps:
-        current_time = step * dt
-        row = [current_time]
-        
-        for leg_idx, current_leg_name in enumerate(leg_names):
-            matched_joints = [j for j in joint_names if current_leg_name in j]
-            kinematics_slice = full_kinematics[leg_idx, num_translations, num_rotations][:, step % num_samples_per_step]
-            for idx, j in enumerate(matched_joints):
-                act_id = model.actuator(j).id
-                prev_pos = data.ctrl[act_id]
-                next_pos = kinematics_slice[idx]
-                data.ctrl[act_id] = next_pos
-            mujoco.mj_step(model, data)
-            #mujoco.mj_rnePostConstraint(model, data) 
-
-            # append data after forward dynamics step to get the correct joint torques and GRF values
-            troch_sensor_adr = model.sensor_adr[sensor_id_1]
-            tibia_sensor_adr = model.sensor_adr[sensor_id_2]
-            torque_troch = data.sensordata[troch_sensor_adr:troch_sensor_adr + 3]
-            torque_tibia = data.sensordata[tibia_sensor_adr:tibia_sensor_adr + 3]
-            row.append(torque_troch[0]) # troch x
-            row.append(torque_troch[1]) # troch y
-            row.append(torque_troch[2]) # troch z
-            row.append(torque_tibia[0]) # tibia x
-            row.append(torque_tibia[1]) # tibia y
-            row.append(torque_tibia[2]) # tibia z
-        
-            for j in leg_joint_map[current_leg_name]:
-                row.append(next_pos) # joint command
-                row.append(data.ctrl[model.actuator(j).id]) # joint angles
-                row.append(data.qvel[joint_qvel_addrs[j]]) # joint velocities
+csv_headers = ['timestamp']
+for current_leg_name in leg_names:
+    csv_headers.extend([f'{current_leg_name}_Tip_GRF_x', f'{current_leg_name}_Tip_GRF_y', f'{current_leg_name}_Tip_GRF_z'])
+    site_name = f"{current_leg_name}_Tip"
+    site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+    if site_id == -1:
+        raise ValueError(f"Site '{site_name}' not found in the model!")
+    parent_body_id = model.site_bodyid[site_id]
+    effector_body_ids[current_leg_name] = parent_body_id
     
-        v.sync()
-        sleep(0.1)
-        row_data.append(row)
-        step += 1
-    # export full master trajectory dataset
-df = pd.DataFrame(row_data, columns=csv_headers)
-df.to_csv(f"csv_trajectory_datasets/master_trajectories_tran{num_translations}_rot{num_rotations}.csv", index=False)
-print("dataset saved!")
+    matched_joints = leg_joint_map[current_leg_name]
+    for j in matched_joints:
+        csv_headers.extend([f'{j}_cmd', f'{j}_pos', f'{j}_vel'])
+    mujoco.mj_step(model, data)
+
+for trans_idx in range(num_trans):
+    for rot_idx in range(num_rot):
+        print(f"Running simulation for translation index {trans_idx} and rotation index {rot_idx}")
+        root_body_id = model.body('Thorax').id 
+        qpos_adr = model.body_jntadr[root_body_id] 
+
+        # set position of Thorax body to start in middle of the floor and slightly above it to avoid initial penetration
+        floor_center_x = 0.0
+        floor_center_y = 0.0
+        floor_clearance_z = 0.1  
+
+        data.qpos[qpos_adr : qpos_adr + 3] = [floor_center_x, floor_center_y, floor_clearance_z]
+        for leg_idx, current_leg_name in enumerate(leg_names):
+            matched_joints = leg_joint_map[current_leg_name]
+            # always start the simulation with the joints in their initial resting posture for the current translation and rotation indices
+            initial_kinematics_slice = full_kinematics[leg_idx, trans_idx, rot_idx][:, 0]
+            
+            for idx, j in enumerate(matched_joints):
+                # set the underlying state position directly so the joints start bent
+                data.qpos[joint_qpos_addrs[j]] = initial_kinematics_slice[idx]
+                # match the actuator control input to match the state target
+                act_id = model.actuator(j).id
+                data.ctrl[act_id] = initial_kinematics_slice[idx]
+
+        # run the simulation and collect data for the current translation and rotation indices
+        with viewer.launch_passive(model, data) as v:
+            print("press esc to exit view")
+            row_data = []
+            step = 0 # initialization for while loop
+            
+            while v.is_running() and step <= num_steps:
+                current_time = step * dt
+                row = [current_time]
+        
+                for leg_idx, current_leg_name in enumerate(leg_names):
+                    matched_joints = leg_joint_map[current_leg_name]
+                    kinematics_slice = full_kinematics[leg_idx, trans_idx, rot_idx][:, step % num_samples_per_step]
+                    for idx, j in enumerate(matched_joints):
+                        act_id = model.actuator(j).id
+                        data.ctrl[act_id] = kinematics_slice[idx]        
+
+                mujoco.mj_step(model, data)
+
+                for leg_idx, current_leg_name in enumerate(leg_names):
+                    total_grf_world = np.zeros(3)
+                    target_foot_id = effector_body_ids[current_leg_name]
+                    
+                    for i in range(data.ncon):
+                        contact = data.contact[i]
+                        body1_id = model.geom_bodyid[contact.geom1]
+                        body2_id = model.geom_bodyid[contact.geom2]
+
+                        if body1_id == target_foot_id or body2_id == target_foot_id:
+                            c_force = np.zeros(6) 
+                            mujoco.mj_contactForce(model, data, i, c_force)
+            
+                            contact_frame = contact.frame.reshape(3, 3)
+                            force_world = contact_frame @ c_force[:3]
+            
+                            if body2_id == target_foot_id:
+                                force_world = -force_world
+                
+                            total_grf_world += force_world
+                            
+                    row.append(total_grf_world[0])  # GRF x
+                    row.append(total_grf_world[1])  # GRF y
+                    row.append(total_grf_world[2])  # GRF z
+
+                    matched_joints = leg_joint_map[current_leg_name]
+                    kinematics_slice = full_kinematics[leg_idx, trans_idx, rot_idx][:, step % num_samples_per_step]
+                    
+                    for idx, j in enumerate(matched_joints):
+                        row.append(kinematics_slice[idx])           # active joint command
+                        row.append(data.qpos[joint_qpos_addrs[j]])  # joint angle
+                        row.append(data.qvel[joint_qvel_addrs[j]])  # joint velocity
+    
+                v.sync()
+                sleep(0.01) 
+                row_data.append(row)
+                step += 1
+                
+        df = pd.DataFrame(row_data, columns=csv_headers)
+        df.to_csv(f"csv_trajectory_datasets/master_trajectories_tran{trans_idx}_rot{rot_idx}.csv", index=False)
+        print(f"Dataset for tran{trans_idx}_rot{rot_idx} saved!")
