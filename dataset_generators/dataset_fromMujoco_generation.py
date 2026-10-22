@@ -465,9 +465,9 @@ leg_joint_map = {}
 leg_effector_map = {}
 joint_id = []
 act_id = []
-dt = model.opt.timestep
-total_time = 10.0
-num_steps = int(total_time / dt)
+dt = model.opt.timestep # 2 milliseconds
+total_time = 5.0 # seconds
+num_steps = int(round(total_time / dt))
 
 for current_leg_name in leg_names:
     matched_joints = [j for j in joint_names if current_leg_name in j]
@@ -489,7 +489,7 @@ for current_leg_name in leg_names:
     
     matched_joints = leg_joint_map[current_leg_name]
     for j in matched_joints:
-        csv_headers.extend([f'{j}_cmd', f'{j}_pos', f'{j}_vel'])
+        csv_headers.extend([f'{j}_cmd', f'{j}_angle', f'{j}_vel'])
     mujoco.mj_step(model, data)
 
 for trans_idx in range(num_trans):
@@ -501,10 +501,10 @@ for trans_idx in range(num_trans):
         # set position of Thorax body to start in middle of the floor and slightly above it to avoid initial penetration
         floor_center_x = 0.0
         floor_center_y = 0.0
-        floor_clearance_z = 0.1  
+        floor_clearance_z = 0.1   
 
         data.qpos[qpos_adr : qpos_adr + 3] = [floor_center_x, floor_center_y, floor_clearance_z]
-        for leg_idx, current_leg_name in enumerate(leg_names):
+        """ for leg_idx, current_leg_name in enumerate(leg_names):
             matched_joints = leg_joint_map[current_leg_name]
             # always start the simulation with the joints in their initial resting posture for the current translation and rotation indices
             initial_kinematics_slice = full_kinematics[leg_idx, trans_idx, rot_idx][:, 0]
@@ -514,7 +514,7 @@ for trans_idx in range(num_trans):
                 data.qpos[joint_qpos_addrs[j]] = initial_kinematics_slice[idx]
                 # match the actuator control input to match the state target
                 act_id = model.actuator(j).id
-                data.ctrl[act_id] = initial_kinematics_slice[idx]
+                data.ctrl[act_id] = initial_kinematics_slice[idx] """
 
         # run the simulation and collect data for the current translation and rotation indices
         with viewer.launch_passive(model, data) as v:
@@ -549,9 +549,9 @@ for trans_idx in range(num_trans):
                             mujoco.mj_contactForce(model, data, i, c_force)
             
                             contact_frame = contact.frame.reshape(3, 3)
-                            force_world = contact_frame @ c_force[:3]
+                            force_world = contact_frame.T @ c_force[:3]
             
-                            if body2_id == target_foot_id:
+                            if body1_id == target_foot_id:
                                 force_world = -force_world
                 
                             total_grf_world += force_world
@@ -569,7 +569,7 @@ for trans_idx in range(num_trans):
                         row.append(data.qvel[joint_qvel_addrs[j]])  # joint velocity
     
                 v.sync()
-                sleep(0.01) 
+                sleep(0.01)  # Adjust sleep time to control simulation speed
                 row_data.append(row)
                 step += 1
                 
