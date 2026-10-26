@@ -34,10 +34,9 @@ test_trajectories = []
 
 # generate a list of all file combinations and split them (e.g., 80% of trajectories for training)
 all_combinations = [(t, r) for t in range(num_translations) for r in range(num_rotations)]
-np.random.seed(42) # For reproducibility
-torch.manual_seed(42) # For reproducibility
-torch.use_deterministic_algorithms(True) # For reproducibility
-#np.random.shuffle(all_combinations)
+np.random.seed(42) # for reproducibility
+torch.manual_seed(42) # for reproducibility
+torch.use_deterministic_algorithms(True) # for reproducibility
 
 split_idx = int(0.8 * len(all_combinations))
 train_combos = all_combinations[:split_idx]
@@ -47,21 +46,21 @@ test_combos = all_combinations[split_idx:]
 for tran_idx, rot_idx in train_combos:
     df = pd.read_csv(f"csv_trajectory_datasets/master_trajectories_tran{tran_idx}_rot{rot_idx}.csv")
     
-    feats = df[["LF_TrF_angle", "LF_FTi_angle", "LF_TrF_vel", "LF_FTi_vel"]].values
+    feats = df[["LF_TrF_angle", "LF_FTi_angle", "LF_TrF_vel", "LF_FTi_vel", "LF_TrF_acc", "LF_FTi_acc"]].values
     targs = df[["LF_Tip_GRF_x", "LF_Tip_GRF_y", "LF_Tip_GRF_z"]].values
     
     # add noise to features before fitting scaler
     noise = np.random.normal(0, 0.01, feats.shape)
     feats += noise
     
-    feature_scaler.partial_fit(feats)
-    target_scaler.partial_fit(targs)
+    feature_scaler.partial_fit(feats) # fit features scaler incrementally
+    target_scaler.partial_fit(targs) # fit targets scaler incrementally
 
 # process individual trajectories
 def process_trajectory(tran_idx, rot_idx, feat_scaler, targ_scaler, is_train=True):
     df = pd.read_csv(f"csv_trajectory_datasets/master_trajectories_tran{tran_idx}_rot{rot_idx}.csv")
     
-    feats = df[["LF_TrF_angle", "LF_FTi_angle", "LF_TrF_vel", "LF_FTi_vel"]].values
+    feats = df[["LF_TrF_angle", "LF_FTi_angle", "LF_TrF_vel", "LF_FTi_vel", "LF_TrF_acc", "LF_FTi_acc"]].values
     targs = df[["LF_Tip_GRF_x", "LF_Tip_GRF_y", "LF_Tip_GRF_z"]].values
     
     # transform using global scalers
@@ -72,7 +71,7 @@ def process_trajectory(tran_idx, rot_idx, feat_scaler, targ_scaler, is_train=Tru
     sequences, target_sequences = [], []
     for i in range(len(feats_scaled) - seq_length):
         sequences.append(feats_scaled[i:i + seq_length])
-        target_sequences.append(targs_scaled[i + seq_length]) # Next-step prediction
+        target_sequences.append(targs_scaled[i + seq_length]) # next-step prediction
         
     return sequences, target_sequences
 
@@ -90,7 +89,7 @@ for tran_idx, rot_idx in test_combos:
     all_test_sequences.extend(seqs)
     all_test_targets.extend(targs)
 
-# 6. Convert straight to PyTorch Tensors
+# convert straight to PyTorch Tensors
 train_sequences_tensor = torch.tensor(np.array(all_train_sequences), dtype=torch.float32)
 train_target_sequences_tensor = torch.tensor(np.array(all_train_targets), dtype=torch.float32)
 
@@ -109,7 +108,7 @@ test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # 2. Define LSTM Model, optimizer parameters, criterion and start training loop
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-model = LSTMRegressionModel(input_size=train_sequences_tensor.shape[2], hidden_size=64, num_layers=3, output_size=train_target_sequences_tensor.shape[1])  # 4 input features, 3 output targets
+model = LSTMRegressionModel(input_size=train_sequences_tensor.shape[2], hidden_size=64, num_layers=2, output_size=train_target_sequences_tensor.shape[1])  # 4 input features, 3 output targets
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
@@ -136,7 +135,7 @@ def generate_predictions(model, tran_idx, rot_idx, feat_scaler, targ_scaler):
     model.eval()
     with torch.no_grad():
         df = pd.read_csv(f"csv_trajectory_datasets/master_trajectories_tran{tran_idx}_rot{rot_idx}.csv")
-        feats = df[["LF_TrF_angle", "LF_FTi_angle", "LF_TrF_vel", "LF_FTi_vel"]].values
+        feats = df[["LF_TrF_angle", "LF_FTi_angle", "LF_TrF_vel", "LF_FTi_vel", "LF_TrF_acc", "LF_FTi_acc"]].values
         targs = df[["LF_Tip_GRF_x", "LF_Tip_GRF_y", "LF_Tip_GRF_z"]].values
         
         feats_scaled = feat_scaler.transform(feats)
@@ -145,7 +144,7 @@ def generate_predictions(model, tran_idx, rot_idx, feat_scaler, targ_scaler):
         sequences, target_sequences = [], []
         for i in range(len(feats_scaled) - seq_length):
             sequences.append(feats_scaled[i:i + seq_length])
-            target_sequences.append(targs_scaled[i + seq_length]) # Next-step prediction
+            target_sequences.append(targs_scaled[i + seq_length]) # next-step prediction
         
         sequences_tensor = torch.tensor(np.array(sequences), dtype=torch.float32)
         predictions_scaled = model(sequences_tensor).numpy()
@@ -153,9 +152,12 @@ def generate_predictions(model, tran_idx, rot_idx, feat_scaler, targ_scaler):
         # Inverse transform to get back to original scale
         predictions = targ_scaler.inverse_transform(predictions_scaled)
         
-    return predictions, targs[seq_length:]  # Return predictions and corresponding true targets
+    return predictions, targs[seq_length:]  # return predictions and corresponding true targets
 
-predictions, true_targets = generate_predictions(model, tran_idx=6, rot_idx=10, feat_scaler=feature_scaler, targ_scaler=target_scaler) # Evaluate on a specific trajectory (tran6_rot10)
+# pick a random trajectory from the test set to visualize predictions vs true values
+for tran_idx, rot_idx in random.sample(test_combos, 1):
+    print(f"Evaluating on trajectory: tran{tran_idx}_rot{rot_idx}")
+    predictions, true_targets = generate_predictions(model, tran_idx=tran_idx, rot_idx=rot_idx, feat_scaler=feature_scaler, targ_scaler=target_scaler) # evaluate on a random test trajectory
 
 figure, axes = plt.subplots(nrows=3, ncols=1, figsize=(15,10), sharex=True)
 ax1, ax2, ax3 = axes.flatten()
@@ -163,17 +165,19 @@ ax1.plot(predictions[:, 0], label="Predicted LF_Tip_GRF_x", color='blue')
 ax1.plot(true_targets[:, 0], label="True LF_Tip_GRF_x", color='orange')
 ax1.set_ylabel('Newton (N)', fontsize=5)
 ax1.set_title('LF_Tip_GRF_x Predictions vs True Values', fontsize=10)
+ax1.legend()
 
 ax2.plot(predictions[:, 1], label="Predicted LF_Tip_GRF_y", color='blue')
 ax2.plot(true_targets[:, 1], label="True LF_Tip_GRF_y", color='orange')
 ax2.set_ylabel('Newton (N)', fontsize=5)
 ax2.set_title('LF_Tip_GRF_y Predictions vs True Values', fontsize=10)
+ax2.legend()
 
 ax3.plot(predictions[:, 2], label="Predicted LF_Tip_GRF_z", color='blue')
 ax3.plot(true_targets[:, 2], label="True LF_Tip_GRF_z", color='orange')
 ax3.set_ylabel('Newton (N)', fontsize=5)
 ax3.set_xlabel('Time Steps')
 ax3.set_title('LF_Tip_GRF_z Predictions vs True Values', fontsize=10)
-figure.suptitle('LSTM Model Predictions vs True Ground Reaction Forces')
-plt.legend()
+figure.suptitle('LSTM Model Predictions vs True Ground Reaction Forces: tran{}_rot{}'.format(tran_idx, rot_idx), fontsize=12)
+ax3.legend()
 plt.show()

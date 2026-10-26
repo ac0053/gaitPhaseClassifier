@@ -489,7 +489,7 @@ for current_leg_name in leg_names:
     
     matched_joints = leg_joint_map[current_leg_name]
     for j in matched_joints:
-        csv_headers.extend([f'{j}_cmd', f'{j}_angle', f'{j}_vel'])
+        csv_headers.extend([f'{j}_cmd', f'{j}_angle', f'{j}_vel', f'{j}_acc'])
     mujoco.mj_step(model, data)
 
 for trans_idx in range(num_trans):
@@ -504,17 +504,6 @@ for trans_idx in range(num_trans):
         floor_clearance_z = 0.1   
 
         data.qpos[qpos_adr : qpos_adr + 3] = [floor_center_x, floor_center_y, floor_clearance_z]
-        """ for leg_idx, current_leg_name in enumerate(leg_names):
-            matched_joints = leg_joint_map[current_leg_name]
-            # always start the simulation with the joints in their initial resting posture for the current translation and rotation indices
-            initial_kinematics_slice = full_kinematics[leg_idx, trans_idx, rot_idx][:, 0]
-            
-            for idx, j in enumerate(matched_joints):
-                # set the underlying state position directly so the joints start bent
-                data.qpos[joint_qpos_addrs[j]] = initial_kinematics_slice[idx]
-                # match the actuator control input to match the state target
-                act_id = model.actuator(j).id
-                data.ctrl[act_id] = initial_kinematics_slice[idx] """
 
         # run the simulation and collect data for the current translation and rotation indices
         with viewer.launch_passive(model, data) as v:
@@ -531,13 +520,13 @@ for trans_idx in range(num_trans):
                     kinematics_slice = full_kinematics[leg_idx, trans_idx, rot_idx][:, step % num_samples_per_step]
                     for idx, j in enumerate(matched_joints):
                         act_id = model.actuator(j).id
-                        data.ctrl[act_id] = kinematics_slice[idx]        
+                        data.ctrl[act_id] = kinematics_slice[idx] # set the actuator control input to match the desired joint angle from the kinematics slice
 
                 mujoco.mj_step(model, data)
 
                 for leg_idx, current_leg_name in enumerate(leg_names):
-                    total_grf_world = np.zeros(3)
-                    target_foot_id = effector_body_ids[current_leg_name]
+                    total_grf_world = np.zeros(3) # initialize total ground reaction forces for the current leg's end effector
+                    target_foot_id = effector_body_ids[current_leg_name] # get the body ID of the current leg's end effector
                     
                     for i in range(data.ncon):
                         contact = data.contact[i]
@@ -546,11 +535,11 @@ for trans_idx in range(num_trans):
 
                         if body1_id == target_foot_id or body2_id == target_foot_id:
                             c_force = np.zeros(6) 
-                            mujoco.mj_contactForce(model, data, i, c_force)
+                            mujoco.mj_contactForce(model, data, i, c_force) # force of body1 on body2 in contact frame
             
                             contact_frame = contact.frame.reshape(3, 3)
-                            force_world = contact_frame.T @ c_force[:3]
-            
+                            force_world = contact_frame.T @ c_force[:3] # transform contact force to world frame
+                            # if the target foot is body1, reverse the force direction to get the force on the foot (body2).
                             if body1_id == target_foot_id:
                                 force_world = -force_world
                 
@@ -567,9 +556,10 @@ for trans_idx in range(num_trans):
                         row.append(kinematics_slice[idx])           # active joint command
                         row.append(data.qpos[joint_qpos_addrs[j]])  # joint angle
                         row.append(data.qvel[joint_qvel_addrs[j]])  # joint velocity
+                        row.append(data.qacc[joint_qvel_addrs[j]])  # joint acceleration
     
                 v.sync()
-                sleep(0.01)  # Adjust sleep time to control simulation speed
+                sleep(0.01)  # adjust sleep time to control simulation speed
                 row_data.append(row)
                 step += 1
                 
